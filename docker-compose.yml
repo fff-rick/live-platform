@@ -1,0 +1,189 @@
+x-app-env: &app-env
+  HTTP_ADDR: ":8080"
+  MYSQL_DSN: "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4"
+  REDIS_ADDR: "redis:6379"
+  REDIS_DB: "0"
+  CENTRIFUGO_API_URL: "http://centrifugo:8000/api"
+  CENTRIFUGO_API_KEY: "dev-api-key-change-me"
+  CENTRIFUGO_TOKEN_SECRET: "dev-token-secret-change-me"
+  CENTRIFUGO_TOKEN_TTL: "1h"
+  CENTRIFUGO_SUBSCRIPTION_TOKEN_TTL: "5m"
+  AUTH_JWT_SECRET: "dev-app-jwt-secret-change-me"
+  AUTH_TOKEN_TTL: "24h"
+  DANMAKU_SENSITIVE_WORDS: "spam,banned"
+  VIEWER_TTL: "90s"
+  STATS_INTERVAL: "200ms"
+  ACTIVE_ROOM_WINDOW: "3m"
+  ACTIVE_ROOM_BATCH: "1000"
+  ENABLE_DEV_WALLET_CREDIT: "true"
+  KAFKA_BROKERS: "kafka:19092"
+  KAFKA_DANMAKU_TOPIC: "live.danmaku.v1"
+  KAFKA_GIFT_TOPIC: "live.gift.v1"
+  KAFKA_DANMAKU_CONSUMER_GROUP: "live-danmaku-persist-v1"
+  KAFKA_GIFT_CONSUMER_GROUP: "live-gift-realtime-v1"
+  KAFKA_CONSUMER_LEASE: "30s"
+  OUTBOX_POLL_INTERVAL: "100ms"
+  OUTBOX_BATCH_SIZE: "100"
+  OUTBOX_LEASE: "30s"
+  OUTBOX_PRODUCE_TIMEOUT: "5s"
+  WORKER_METRICS_ADDR: ":9090"
+  OTEL_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "otel-collector:4317"
+  OTEL_INSECURE: "true"
+  OTEL_SAMPLE_RATIO: "1"
+  DEPLOYMENT_ENVIRONMENT: "development"
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: live
+      MYSQL_USER: live
+      MYSQL_PASSWORD: live
+      MYSQL_ROOT_PASSWORD: root
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    ports: ["3307:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./migrations/002_m2.sql:/docker-entrypoint-initdb.d/002_m2.sql:ro
+      - ./migrations/003_m4.sql:/docker-entrypoint-initdb.d/003_m4.sql:ro
+      - ./migrations/004_m5.sql:/docker-entrypoint-initdb.d/004_m5.sql:ro
+
+  redis:
+    image: redis:7.4-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:4.3.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:19092"
+      KAFKA_LISTENERS: "CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "1"
+      KAFKA_NUM_PARTITIONS: "6"
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+    ports: ["9092:9092"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes: ["kafka_data:/var/lib/kafka/data"]
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka: {condition: service_healthy}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.danmaku.v1 --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.gift.v1 --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
+
+  tempo:
+    image: grafana/tempo:2.10.7
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./deployments/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports: ["3200:3200"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.158.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./deployments/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on: [tempo]
+
+  centrifugo:
+    image: centrifugo/centrifugo:v6.9.1
+    command: ["centrifugo", "-c", "config.json"]
+    volumes:
+      - ./configs/centrifugo.json:/centrifugo/config.json:ro
+    ports: ["8000:8000"]
+    depends_on:
+      redis: {condition: service_healthy}
+
+  live-api:
+    build: .
+    command: ["live-api"]
+    environment: *app-env
+    ports: ["8080:8080"]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      centrifugo: {condition: service_started}
+      otel-collector: {condition: service_started}
+
+  live-worker:
+    build: .
+    command: ["live-worker"]
+    environment: *app-env
+    ports: ["9090:9090"]
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      centrifugo: {condition: service_started}
+      kafka-init: {condition: service_completed_successfully}
+      otel-collector: {condition: service_started}
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports: ["9091:9090"]
+    depends_on:
+      - live-api
+      - live-worker
+      - centrifugo
+
+  grafana:
+    image: grafana/grafana:13.0.6
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deployments/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports: ["3000:3000"]
+    depends_on:
+      - prometheus
+      - tempo
+
+volumes:
+  mysql_data:
+  kafka_data:
+  tempo_data:
+  prometheus_data:
+  grafana_data:

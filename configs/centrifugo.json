@@ -1,0 +1,47 @@
+{
+  "client": {
+    "token": {
+      "hmac_secret_key": "dev-token-secret-change-me"
+    },
+    "allowed_origins": [
+      "http://localhost:8080",
+      "http://127.0.0.1:8080"
+    ]
+  },
+  "http_api": {
+    "key": "dev-api-key-change-me",
+    "error_mode": "transport"
+  },
+  "channel": {
+    "namespaces": [
+      {
+        "name": "room",
+        "history_size": 100,
+        "history_ttl": "30s",
+        "force_recovery": true,
+        "channel_regex": "^[0-9]+:(stream|stats)$"
+      },
+      {
+        "name": "personal",
+        "allow_user_limited_channels": true
+      }
+    ]
+  },
+  "engine": {
+    "type": "redis",
+    "redis": {
+      "address": "redis://redis:6379/1"
+    }
+  },
+  "health": {
+    "enabled": true
+  },
+  "prometheus": {
+    "enabled": true,
+    "instrument_http_handlers": true,
+    "recovered_publications_histogram": true
+  },
+  "shutdown": {
+    "timeout": "15s"
+  }
+}

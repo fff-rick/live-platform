@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Live Platform M6 Demo</title>
+  <script src="https://unpkg.com/centrifuge@5.7.0/dist/centrifuge.js"></script>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 20px}input,button{padding:8px;margin:4px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.card{border:1px solid #ddd;border-radius:10px;padding:14px;margin:12px 0}pre{background:#111;color:#eee;padding:16px;min-height:260px;overflow:auto}.hint{color:#666;font-size:14px}.metric{font-size:24px;font-weight:700;margin-right:24px}
+  </style>
+</head>
+<body>
+  <h1>Live Platform / M6</h1>
+  <p class="hint">M6 增加 Prometheus、Grafana、OpenTelemetry/Tempo、业务指标与跨异步链路 Trace。Centrifugo room channel 已开启短期 History/Recovery；断线重连由客户端和服务端共同完成恢复。</p>
+
+  <div class="card">
+    <strong>M6 Observability</strong>
+    <div class="row"><a href="http://localhost:3000" target="_blank">Grafana</a><a href="http://localhost:9091" target="_blank">Prometheus</a><a href="http://localhost:8080/metrics" target="_blank">API Metrics</a><a href="http://localhost:8000/metrics" target="_blank">Centrifugo Metrics</a></div>
+    <p class="hint">可在 Grafana Explore 中选择 Tempo 查看 live-api → Outbox → Kafka → live-worker → Centrifugo Trace。</p>
+  </div>
+
+  <div class="card">
+    <strong>实时状态</strong>
+    <div class="row"><span class="metric">在线 <span id="viewerCount">0</span></span><span class="metric">点赞 <span id="likeCount">0</span></span></div>
+  </div>
+
+  <div class="card">
+    <strong>1. 用户认证</strong>
+    <div class="row">
+      <input id="username" value="anchor1" placeholder="username">
+      <input id="nickname" value="主播A" placeholder="nickname">
+      <input id="password" value="password123" type="password" placeholder="password">
+      <button id="register">注册</button><button id="login">登录</button>
+    </div>
+    <div id="authState" class="hint">未登录</div>
+  </div>
+
+  <div class="card">
+    <strong>2. 直播间</strong>
+    <div class="row">
+      <input id="title" value="Centrifugo 高并发直播" size="30">
+      <button id="createRoom">创建房间</button>
+      <label>Room ID <input id="room" value="1" size="8"></label>
+      <button id="startRoom">开播</button><button id="joinRoom">加入并连接实时服务</button><button id="stopRoom">关播</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>3. 弹幕 / 点赞</strong>
+    <div class="row">
+      <input id="message" value="主播好" size="45"><button id="danmaku">发送弹幕</button>
+      <button id="like">👍 点赞</button><span class="hint">连续点击会先在浏览器本地合并，再批量请求后端。</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>4. Wallet / Gift</strong>
+    <div class="row">
+      <span class="metric">余额 <span id="walletBalance">0</span></span>
+      <button id="walletRefresh">刷新余额</button>
+      <button id="walletCredit">Dev +100000</button>
+    </div>
+    <div class="row">
+      <select id="gift"></select>
+      <label>数量 <input id="giftCount" type="number" min="1" max="100" value="1" size="6"></label>
+      <label>Idempotency-Key <input id="idempotencyKey" size="38"></label>
+      <button id="newKey">新 Key</button>
+      <button id="sendGift">送礼物</button>
+    </div>
+    <p class="hint">重复使用同一个 Key + 相同参数应返回同一订单且只扣一次款；同 Key 改参数应返回冲突。</p>
+  </div>
+
+  <pre id="log"></pre>
+<script>
+const $ = id => document.getElementById(id);
+const log = (...args) => { $('log').textContent += args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; $('log').scrollTop = $('log').scrollHeight; };
+let accessToken = localStorage.getItem('live_access_token') || '';
+let currentUser = JSON.parse(localStorage.getItem('live_user') || 'null');
+let centrifuge, heartbeatTimer, likeTimer, pendingLikes = 0;
+const seenEventIds = new Set();
+const newIdempotencyKey = () => (crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+function authHeaders(extra={}) { return accessToken ? {...extra, Authorization:`Bearer ${accessToken}`} : extra; }
+function showAuth() { $('authState').textContent = currentUser ? `已登录: ${currentUser.nickname} (#${currentUser.id})` : '未登录'; }
+function applyStats(v={}) { if (v.viewer_count !== undefined) $('viewerCount').textContent=v.viewer_count; if (v.like_count !== undefined) $('likeCount').textContent=v.like_count; }
+function acceptRealtime(data){
+  const id=data?.event_id;
+  if(!id) return true;
+  if(seenEventIds.has(id)) { log('duplicate realtime event ignored',id); return false; }
+  seenEventIds.add(id);
+  if(seenEventIds.size>5000) seenEventIds.delete(seenEventIds.values().next().value);
+  return true;
+}
+showAuth();
+$('idempotencyKey').value = newIdempotencyKey();
+
+async function api(path, options={}) {
+  options.headers = authHeaders(options.headers || {});
+  const res = await fetch(path, options); const body = await res.json().catch(()=>({}));
+  if (!res.ok) throw {status:res.status, body}; return body;
+}
+async function refreshWallet(){
+  if(!accessToken) return;
+  try { const v=await api('/api/v1/wallet'); $('walletBalance').textContent=v.balance; } catch(e){ log('wallet error',e.body||e); }
+}
+async function loadGifts(){
+  try { const v=await api('/api/v1/gifts'); $('gift').innerHTML=v.items.map(g=>`<option value="${g.gift_id}">${g.name} / ${g.price}</option>`).join(''); } catch(e){ log('gift list error',e.body||e); }
+}
+
+$('register').onclick = async () => { try { const body=await api('/api/v1/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,nickname:$('nickname').value,password:$('password').value})}); accessToken=body.access_token; currentUser=body.user; localStorage.setItem('live_access_token',accessToken); localStorage.setItem('live_user',JSON.stringify(currentUser)); showAuth(); await refreshWallet(); log('registered',body.user); } catch(e){log('register error',e.body||e);} };
+$('login').onclick = async () => { try { const body=await api('/api/v1/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})}); accessToken=body.access_token; currentUser=body.user; localStorage.setItem('live_access_token',accessToken); localStorage.setItem('live_user',JSON.stringify(currentUser)); showAuth(); await refreshWallet(); log('logged in',body.user); } catch(e){log('login error',e.body||e);} };
+$('createRoom').onclick = async () => { try { const room=await api('/api/v1/rooms',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('title').value})}); $('room').value=room.room_id; log('room created',room); } catch(e){log('create room error',e.body||e);} };
+$('startRoom').onclick = async () => { try { log('room started',await api(`/api/v1/rooms/${$('room').value}/start`,{method:'POST'})); } catch(e){log('start error',e.body||e);} };
+$('stopRoom').onclick = async () => { try { log('room stopped',await api(`/api/v1/rooms/${$('room').value}/stop`,{method:'POST'})); } catch(e){log('stop error',e.body||e);} };
+
+$('joinRoom').onclick = async () => {
+  try {
+    const roomID=$('room').value;
+    const [join, rt] = await Promise.all([api(`/api/v1/rooms/${roomID}/join`,{method:'POST'}), api('/api/v1/realtime/token',{method:'POST'})]);
+    applyStats(join.stats);
+    if (centrifuge) centrifuge.disconnect(); if (heartbeatTimer) clearInterval(heartbeatTimer);
+    centrifuge = new Centrifuge('ws://localhost:8000/connection/websocket',{token:rt.token});
+    centrifuge.on('connected',ctx=>log('realtime connected',ctx)); centrifuge.on('disconnected',ctx=>log('realtime disconnected',ctx)); centrifuge.on('error',ctx=>log('realtime error',ctx));
+    for (const s of join.subscriptions) {
+      const sub=centrifuge.newSubscription(s.channel,{token:s.token});
+      sub.on('subscribed',ctx=>log('subscribed',s.channel,ctx));
+      sub.on('publication',ctx=>{ if(!acceptRealtime(ctx.data)) return; log('publication',s.channel,ctx.data); if (ctx.data?.type==='stats') applyStats(ctx.data.data); });
+      sub.on('error',ctx=>log('subscription error',s.channel,ctx)); sub.subscribe();
+    }
+    const personal=centrifuge.newSubscription(join.personal_channel); personal.on('publication',ctx=>log('personal',ctx.data)); personal.subscribe(); centrifuge.connect();
+    const heartbeatMs = Math.max(5000, (join.heartbeat_interval_seconds || 30) * 1000);
+    heartbeatTimer=setInterval(async()=>{ try { const v=await api(`/api/v1/rooms/${roomID}/heartbeat`,{method:'POST'}); $('viewerCount').textContent=v.viewer_count; } catch(e){log('heartbeat error',e.body||e);} },heartbeatMs);
+    log('joined room',join.room,'stats',join.stats,'heartbeat',heartbeatMs+'ms');
+  } catch(e){log('join error',e.body||e);}
+};
+
+$('danmaku').onclick = async () => { try { log('danmaku accepted',await api(`/api/v1/rooms/${$('room').value}/danmaku`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:$('message').value})})); } catch(e){log('danmaku error',e.body||e);} };
+
+async function flushLikes(){
+  const count=pendingLikes; pendingLikes=0; likeTimer=null; if(!count) return;
+  try { const v=await api(`/api/v1/rooms/${$('room').value}/like`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count})}); $('likeCount').textContent=v.total; log('likes accepted',v); }
+  catch(e){ log('like error',e.body||e); }
+}
+$('like').onclick = () => { pendingLikes++; if (pendingLikes >= 100) { if (likeTimer) clearTimeout(likeTimer); likeTimer=null; flushLikes(); return; } if(!likeTimer) likeTimer=setTimeout(flushLikes,300); };
+$('walletRefresh').onclick = refreshWallet;
+$('walletCredit').onclick = async () => { try { const v=await api('/api/v1/wallet/dev-credit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount:100000})}); $('walletBalance').textContent=v.balance; log('wallet credited',v); } catch(e){log('credit error',e.body||e);} };
+$('newKey').onclick = () => { $('idempotencyKey').value = newIdempotencyKey(); };
+$('sendGift').onclick = async () => {
+  try {
+    const body=await api(`/api/v1/rooms/${$('room').value}/gifts`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':$('idempotencyKey').value},body:JSON.stringify({gift_id:Number($('gift').value),count:Number($('giftCount').value)})});
+    log('gift result',body); await refreshWallet();
+  } catch(e){log('gift error',e.body||e);}
+};
+loadGifts(); refreshWallet();
+</script>
+</body>
+</html>

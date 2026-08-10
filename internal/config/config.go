@@ -1,0 +1,207 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	HTTP          HTTPConfig
+	MySQL         MySQLConfig
+	Redis         RedisConfig
+	Centrifugo    CentrifugoConfig
+	Auth          AuthConfig
+	Danmaku       DanmakuConfig
+	Engagement    EngagementConfig
+	Wallet        WalletConfig
+	Kafka         KafkaConfig
+	Outbox        OutboxConfig
+	Observability ObservabilityConfig
+}
+
+type HTTPConfig struct{ Addr string }
+type MySQLConfig struct{ DSN string }
+type RedisConfig struct {
+	Addr, Password string
+	DB             int
+}
+type CentrifugoConfig struct {
+	APIURL               string
+	APIKey               string
+	TokenSecret          string
+	TokenTTL             time.Duration
+	SubscriptionTokenTTL time.Duration
+}
+type AuthConfig struct {
+	JWTSecret string
+	TokenTTL  time.Duration
+}
+type DanmakuConfig struct{ SensitiveWords []string }
+type WalletConfig struct{ DevCreditEnabled bool }
+type KafkaConfig struct {
+	Brokers              []string
+	DanmakuTopic         string
+	GiftTopic            string
+	DanmakuConsumerGroup string
+	GiftConsumerGroup    string
+	ConsumerLease        time.Duration
+}
+type ObservabilityConfig struct {
+	WorkerMetricsAddr string
+	OTelEnabled       bool
+	OTelEndpoint      string
+	OTelInsecure      bool
+	OTelSampleRatio   float64
+	Environment       string
+}
+
+type OutboxConfig struct {
+	PollInterval   time.Duration
+	BatchSize      int
+	Lease          time.Duration
+	ProduceTimeout time.Duration
+}
+
+type EngagementConfig struct {
+	ViewerTTL        time.Duration
+	StatsInterval    time.Duration
+	ActiveRoomWindow time.Duration
+	ActiveRoomBatch  int64
+}
+
+func Load() (Config, error) {
+	db, err := strconv.Atoi(env("REDIS_DB", "0"))
+	if err != nil {
+		return Config{}, fmt.Errorf("REDIS_DB: %w", err)
+	}
+	cfTTL, err := time.ParseDuration(env("CENTRIFUGO_TOKEN_TTL", "1h"))
+	if err != nil {
+		return Config{}, fmt.Errorf("CENTRIFUGO_TOKEN_TTL: %w", err)
+	}
+	subTTL, err := time.ParseDuration(env("CENTRIFUGO_SUBSCRIPTION_TOKEN_TTL", "5m"))
+	if err != nil {
+		return Config{}, fmt.Errorf("CENTRIFUGO_SUBSCRIPTION_TOKEN_TTL: %w", err)
+	}
+	authTTL, err := time.ParseDuration(env("AUTH_TOKEN_TTL", "24h"))
+	if err != nil {
+		return Config{}, fmt.Errorf("AUTH_TOKEN_TTL: %w", err)
+	}
+
+	viewerTTL, err := time.ParseDuration(env("VIEWER_TTL", "90s"))
+	if err != nil || viewerTTL <= 0 {
+		return Config{}, fmt.Errorf("VIEWER_TTL must be a positive duration")
+	}
+	statsInterval, err := time.ParseDuration(env("STATS_INTERVAL", "200ms"))
+	if err != nil || statsInterval <= 0 {
+		return Config{}, fmt.Errorf("STATS_INTERVAL must be a positive duration")
+	}
+	activeRoomWindow, err := time.ParseDuration(env("ACTIVE_ROOM_WINDOW", "3m"))
+	if err != nil || activeRoomWindow <= viewerTTL {
+		return Config{}, fmt.Errorf("ACTIVE_ROOM_WINDOW must be greater than VIEWER_TTL")
+	}
+	activeRoomBatch, err := strconv.ParseInt(env("ACTIVE_ROOM_BATCH", "1000"), 10, 64)
+	if err != nil || activeRoomBatch <= 0 {
+		return Config{}, fmt.Errorf("ACTIVE_ROOM_BATCH must be a positive integer")
+	}
+	devCreditEnabled, err := strconv.ParseBool(env("ENABLE_DEV_WALLET_CREDIT", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("ENABLE_DEV_WALLET_CREDIT: %w", err)
+	}
+
+	kafkaBrokers := splitCSV(env("KAFKA_BROKERS", "kafka:9092"))
+	if len(kafkaBrokers) == 0 {
+		return Config{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
+	}
+	consumerLease, err := time.ParseDuration(env("KAFKA_CONSUMER_LEASE", "30s"))
+	if err != nil || consumerLease <= 0 {
+		return Config{}, fmt.Errorf("KAFKA_CONSUMER_LEASE must be a positive duration")
+	}
+	outboxPoll, err := time.ParseDuration(env("OUTBOX_POLL_INTERVAL", "100ms"))
+	if err != nil || outboxPoll <= 0 {
+		return Config{}, fmt.Errorf("OUTBOX_POLL_INTERVAL must be a positive duration")
+	}
+	outboxBatch, err := strconv.Atoi(env("OUTBOX_BATCH_SIZE", "100"))
+	if err != nil || outboxBatch <= 0 || outboxBatch > 1000 {
+		return Config{}, fmt.Errorf("OUTBOX_BATCH_SIZE must be between 1 and 1000")
+	}
+	outboxLease, err := time.ParseDuration(env("OUTBOX_LEASE", "30s"))
+	if err != nil || outboxLease <= 0 {
+		return Config{}, fmt.Errorf("OUTBOX_LEASE must be a positive duration")
+	}
+	outboxProduceTimeout, err := time.ParseDuration(env("OUTBOX_PRODUCE_TIMEOUT", "5s"))
+	if err != nil || outboxProduceTimeout <= 0 {
+		return Config{}, fmt.Errorf("OUTBOX_PRODUCE_TIMEOUT must be a positive duration")
+	}
+
+	otelEnabled, err := strconv.ParseBool(env("OTEL_ENABLED", "true"))
+	if err != nil {
+		return Config{}, fmt.Errorf("OTEL_ENABLED: %w", err)
+	}
+	otelInsecure, err := strconv.ParseBool(env("OTEL_INSECURE", "true"))
+	if err != nil {
+		return Config{}, fmt.Errorf("OTEL_INSECURE: %w", err)
+	}
+	otelSampleRatio, err := strconv.ParseFloat(env("OTEL_SAMPLE_RATIO", "1"), 64)
+	if err != nil || otelSampleRatio < 0 || otelSampleRatio > 1 {
+		return Config{}, fmt.Errorf("OTEL_SAMPLE_RATIO must be between 0 and 1")
+	}
+	var words []string
+	for _, w := range strings.Split(env("DANMAKU_SENSITIVE_WORDS", "spam,banned"), ",") {
+		if w = strings.TrimSpace(w); w != "" {
+			words = append(words, w)
+		}
+	}
+	return Config{
+		HTTP:  HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
+		MySQL: MySQLConfig{DSN: env("MYSQL_DSN", "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4")},
+		Redis: RedisConfig{Addr: env("REDIS_ADDR", "redis:6379"), Password: os.Getenv("REDIS_PASSWORD"), DB: db},
+		Centrifugo: CentrifugoConfig{
+			APIURL:               env("CENTRIFUGO_API_URL", "http://centrifugo:8000/api"),
+			APIKey:               env("CENTRIFUGO_API_KEY", "dev-api-key-change-me"),
+			TokenSecret:          env("CENTRIFUGO_TOKEN_SECRET", "dev-token-secret-change-me"),
+			TokenTTL:             cfTTL,
+			SubscriptionTokenTTL: subTTL,
+		},
+		Auth:       AuthConfig{JWTSecret: env("AUTH_JWT_SECRET", "dev-app-jwt-secret-change-me"), TokenTTL: authTTL},
+		Danmaku:    DanmakuConfig{SensitiveWords: words},
+		Engagement: EngagementConfig{ViewerTTL: viewerTTL, StatsInterval: statsInterval, ActiveRoomWindow: activeRoomWindow, ActiveRoomBatch: activeRoomBatch},
+		Wallet:     WalletConfig{DevCreditEnabled: devCreditEnabled},
+		Kafka: KafkaConfig{
+			Brokers:              kafkaBrokers,
+			DanmakuTopic:         env("KAFKA_DANMAKU_TOPIC", "live.danmaku.v1"),
+			GiftTopic:            env("KAFKA_GIFT_TOPIC", "live.gift.v1"),
+			DanmakuConsumerGroup: env("KAFKA_DANMAKU_CONSUMER_GROUP", "live-danmaku-persist-v1"),
+			GiftConsumerGroup:    env("KAFKA_GIFT_CONSUMER_GROUP", "live-gift-realtime-v1"),
+			ConsumerLease:        consumerLease,
+		},
+		Outbox: OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
+		Observability: ObservabilityConfig{
+			WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
+			OTelEnabled:       otelEnabled,
+			OTelEndpoint:      env("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317"),
+			OTelInsecure:      otelInsecure,
+			OTelSampleRatio:   otelSampleRatio,
+			Environment:       env("DEPLOYMENT_ENVIRONMENT", "development"),
+		},
+	}, nil
+}
+
+func splitCSV(raw string) []string {
+	var out []string
+	for _, v := range strings.Split(raw, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
