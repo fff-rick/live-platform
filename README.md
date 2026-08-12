@@ -1,8 +1,8 @@
 # Live Platform
 
-基于 **Go + Centrifugo + Redis + MySQL + Kafka** 的高并发直播互动系统。当前完整快照：**M0 → M6**。
+基于 **Go + Centrifugo + Redis + MySQL + Kafka** 的高并发直播互动系统。当前完整快照：**M0 → M7**。
 
-> M6 目标：让系统从“能运行、能恢复”升级为“能观测、能定位、能追踪”。
+> M7 目标：用可重复压测与热点治理，把“高并发”从架构描述变成可测量、可降级、可给出容量结论的工程能力。
 
 ## Milestones
 
@@ -61,6 +61,162 @@
 - 更严格的 API Readiness
 - API / Worker Graceful Shutdown
 - Centrifugo History + Recovery
+
+### M7 — Performance Engineering & Hot Room Protection
+- 独立 Go WebSocket Load Generator（官方 `centrifuge-go` SDK）
+- Connection Sweep：10K → 50K → 100K
+- 单热点房间 vs 多房间分布对比
+- Server-side Broadcast 压测与端到端延迟采集
+- Slow Consumer 模拟
+- 通用 HTTP Load Generator（Like / Gift）
+- Soak Test / Fault Injection 脚本
+- NORMAL / HOT / PROTECT 热点房间模式
+- 基于 Viewer Count + Danmaku Rate 的实时降级
+- 确定性弹幕采样，关键消息不降级
+- Realtime 消息优先级标记：Gift P1 / Danmaku P3 / Stats P4（用于分类和后续策略，不宣称 Centrifugo 提供通用优先级队列）
+- Centrifugo client queue 限制，保护服务端免受慢消费者无限堆积
+- `benchmark/` 真实性能报告模板，禁止预填虚假数据
+
+---
+
+# M7 性能工程
+
+## 热点房间治理
+
+弹幕在完成鉴权、房间状态、禁言、用户限流和敏感词检查后，会进入 Traffic Policy：
+
+```text
+Viewer Count + Danmaku Rate
+            │
+            ▼
+      NORMAL / HOT / PROTECT
+            │
+     ┌──────┴──────┐
+     ▼             ▼
+ broadcast       sampled
+     │
+     ▼
+ Centrifugo
+```
+
+默认开发阈值：
+
+```text
+HOT:     viewers >= 50,000  OR danmaku >= 500 / s
+PROTECT: viewers >= 100,000 OR danmaku >= 2,000 / s
+
+HOT sample rate:     50%
+PROTECT sample rate: 20%
+```
+
+这些值只是默认配置，不是容量结论。最终阈值必须根据 M7 真实压测调整。采样基于 `message_id` hash，因此同一个事件的决策稳定，不依赖进程本地随机数。被采样的弹幕仍可尝试进入 Kafka 异步持久化，但不会进入全房间广播。
+
+可先执行 `make m7-degradation-smoke`，脚本会临时把速率阈值降低到 2/4，用真实 HTTP 弹幕链路依次触发 NORMAL → HOT → PROTECT，验收后自动恢复默认阈值。这个 Smoke 只验证降级逻辑，不代表生产阈值。
+
+Prometheus 新增：
+
+```text
+live_danmaku_degradation_total{mode,action}
+```
+
+其中 `mode` 为 `NORMAL/HOT/PROTECT`，`action` 为 `broadcast/sampled`。
+
+## 慢消费者保护
+
+Centrifugo 配置：
+
+```json
+{
+  "client": {
+    "queue_max_size": 262144
+  }
+}
+```
+
+当前 M7 压测配置把单连接发送队列限制为 256 KiB；这不是生产推荐值，最终应根据消息大小、可接受积压和断连策略压测确定。slow-consumer 场景会故意阻塞部分客户端的 SDK publication callback，验证慢客户端是否被隔离，以及服务端内存是否保持可控。
+
+## WebSocket Load Generator
+
+工具目录：
+
+```text
+tools/loadtest/
+```
+
+该工具使用独立 Go module 和 Centrifugal 官方 Go Client SDK。它直接生成开发环境 JWT，不需要为 100K 虚拟客户端创建 100K 条 MySQL 用户数据，因此适合测量 Centrifugo 自身连接/订阅/广播容量。
+
+示例：
+
+```bash
+cd tools/loadtest
+go run . \
+  --clients 10000 \
+  --rooms 1 \
+  --connect-rate 3000 \
+  --publish-rate 100 \
+  --duration 60s \
+  --report ../../reports/m7/hot-room.json
+```
+
+报告记录：
+
+```text
+connect events / errors
+current connected
+disconnect events
+subscribe errors
+publication count
+recovery attempts / recovered
+server publish success / failure
+publication latency P50 / P95 / P99 / Max
+```
+
+## HTTP Load Generator
+
+```text
+tools/httpload/
+```
+
+用于 Like / Gift 等 HTTP 热路径，支持固定请求速率、并发上限、Bearer Token、唯一 Idempotency-Key、状态码分布和 P50/P95/P99。
+
+## 推荐执行顺序
+
+```bash
+make m7-degradation-smoke
+make m7-connection-sweep
+make m7-hotroom
+make m7-slow-consumer
+
+ROOM_ID=... TOKEN=... RATE=1000 make m7-like-storm
+ROOM_ID=... TOKEN=... GIFT_ID=... RATE=100 make m7-gift-load
+
+DURATION=6h make m7-soak
+make m7-snapshot  # 保存 docker / Redis / MySQL / Kafka / Prometheus 原始快照
+# 故障脚本最好与持续 loadtest 同时运行，才能测到真实用户影响
+make m7-fault
+```
+
+默认 Connection Sweep 是：
+
+```text
+10K → 50K → 100K
+```
+
+如果单台压测机的 ephemeral ports、file descriptors、CPU 或网络先成为瓶颈，应使用多台 Load Generator，而不是把客户端机器瓶颈误判成服务端瓶颈。
+
+## Benchmark 数据纪律
+
+`benchmark/README.md` 只提供报告模板。仓库不会出现类似“单机 100K / P99 30ms”这种未经真实实验的数据。
+
+最终只有真实执行后才能填写：
+
+```text
+C_conn = 单节点安全连接容量
+C_msg  = 单节点安全消息吞吐
+C_bw   = 单节点安全网络吞吐
+
+C_actual = min(C_conn, C_msg, C_bw)
+```
 
 ---
 
@@ -584,9 +740,9 @@ Kafka Producer 是否持续失败？
 
 ---
 
-# Next — M7
+# M7 Benchmark Execution
 
-下一阶段进入性能工程：
+当前阶段进入性能工程：
 
 ```text
 Go WebSocket Load Generator
@@ -602,4 +758,28 @@ Hot Room Degradation
 Capacity Model
 ```
 
-M7 所有性能结论必须由真实 Benchmark 产生，禁止预填或编造数据。
+M7 所有性能结论必须由真实 Benchmark 产生，禁止预填或编造数据。完成容量验收后，下一阶段进入 M8 集群部署与最终交付。
+
+
+# M7 Environment Variables
+
+```text
+DANMAKU_HOT_VIEWERS=50000
+DANMAKU_PROTECT_VIEWERS=100000
+DANMAKU_HOT_RATE=500
+DANMAKU_PROTECT_RATE=2000
+DANMAKU_HOT_SAMPLE_RATE=0.5
+DANMAKU_PROTECT_SAMPLE_RATE=0.2
+DANMAKU_RATE_WINDOW=1s
+```
+
+# M7 Done Definition
+
+M7 的代码交付完成不代表已经获得容量数字。真正完成压测验收时应同时具备：
+
+- 可重复执行的 Connection / Broadcast / Slow Consumer / HTTP / Soak / Fault 场景；
+- Grafana/Prometheus 对 CPU、Memory、Network、P99、Redis、Kafka、MySQL 的同期观测；
+- HOT/PROTECT 降级在压测中实际触发；
+- 压测客户端本身不存在明显资源瓶颈，或已采用多机压测；
+- `benchmark/` 中填写的是实际数据而不是估算值；
+- 给出最大容量、建议安全容量以及首要瓶颈。

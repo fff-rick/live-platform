@@ -111,7 +111,7 @@ func main() {
 	run("gift-consumer", func(ctx context.Context) error { return giftConsumer.Run(ctx, giftHandler) })
 	run("danmaku-consumer", func(ctx context.Context) error { return danmakuConsumer.Run(ctx, danmakuHandler) })
 
-	log.Info("worker started", "milestone", "M6", "kafka_brokers", cfg.Kafka.Brokers, "outbox_interval", cfg.Outbox.PollInterval.String())
+	log.Info("worker started", "milestone", "M7", "kafka_brokers", cfg.Kafka.Brokers, "outbox_interval", cfg.Outbox.PollInterval.String())
 	select {
 	case <-ctx.Done():
 		log.Info("worker shutdown signal")
@@ -144,7 +144,7 @@ func newMetricsServer(addr string, metrics *observability.Metrics) *http.Server 
 	mux.Handle("GET /metrics", metrics.Handler())
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","service":"live-worker","milestone":"M6"}`))
+		_, _ = w.Write([]byte(`{"status":"ok","service":"live-worker","milestone":"M7"}`))
 	})
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
 }

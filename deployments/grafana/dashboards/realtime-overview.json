@@ -293,6 +293,46 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 8,
+      "title": "Danmaku degradation decisions",
+      "type": "timeseries",
+      "description": "HOT/PROTECT policy decisions. sampled means the message was persisted asynchronously but not broadcast to the room.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(live_danmaku_degradation_total[1m])) by (mode, action)",
+          "legendFormat": "{{mode}} / {{action}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ]
 }

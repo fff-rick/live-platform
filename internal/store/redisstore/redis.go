@@ -47,6 +47,35 @@ func roomLastViewerKey(roomID int64) string {
 	return "live:room:" + formatInt(roomID) + ":stats:last_viewer"
 }
 
+func roomDanmakuRateKey(roomID int64) string {
+	return "live:room:" + formatInt(roomID) + ":danmaku:rate"
+}
+
+var danmakuPressureScript = redis.NewScript(`
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+local viewers = redis.call('ZCARD', KEYS[1])
+local rate = redis.call('INCR', KEYS[2])
+if rate == 1 then
+  redis.call('PEXPIRE', KEYS[2], ARGV[2])
+end
+return {viewers, rate}
+`)
+
+// DanmakuPressure returns the current deduplicated viewer count and the number
+// of danmaku requests observed in the configured fixed window. It is used only
+// for degradation decisions; it is not a billing or authoritative statistic.
+func (s *Store) DanmakuPressure(ctx context.Context, roomID int64, window time.Duration) (int64, int64, error) {
+	now := time.Now().UnixMilli()
+	vals, err := danmakuPressureScript.Run(ctx, s.client, []string{roomViewersKey(roomID), roomDanmakuRateKey(roomID)}, now, window.Milliseconds()).Int64Slice()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(vals) != 2 {
+		return 0, 0, redis.Nil
+	}
+	return vals[0], vals[1], nil
+}
+
 var addLikesScript = redis.NewScript(`
 local total = redis.call('INCRBY', KEYS[1], ARGV[1])
 redis.call('INCRBY', KEYS[2], ARGV[1])
