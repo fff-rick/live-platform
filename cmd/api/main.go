@@ -24,6 +24,7 @@ import (
 	"github.com/example/live-platform/internal/store/mysqlstore"
 	"github.com/example/live-platform/internal/store/redisstore"
 	cftoken "github.com/example/live-platform/internal/token"
+	"github.com/example/live-platform/internal/traffic"
 	"github.com/example/live-platform/internal/viewer"
 	"github.com/example/live-platform/internal/wallet"
 )
@@ -75,7 +76,12 @@ func main() {
 	roomService := room.NewService(roomRepo)
 	limiter := redisstore.NewFixedWindowLimiter(redis)
 	filter := danmaku.NewSensitiveFilter(cfg.Danmaku.SensitiveWords)
-	danmakuService := danmaku.NewService(roomService, authService, limiter, filter, publisher, danmaku.NewKafkaProducer(kafkaProducer, cfg.Kafka.DanmakuTopic, log))
+	trafficPolicy := traffic.NewPolicy(redis, traffic.Config{
+		HotViewers: cfg.Traffic.HotViewers, ProtectViewers: cfg.Traffic.ProtectViewers,
+		HotDanmakuRate: cfg.Traffic.HotDanmakuRate, ProtectDanmakuRate: cfg.Traffic.ProtectDanmakuRate,
+		HotSampleRate: cfg.Traffic.HotSampleRate, ProtectSampleRate: cfg.Traffic.ProtectSampleRate, RateWindow: cfg.Traffic.RateWindow,
+	}, metrics)
+	danmakuService := danmaku.NewService(roomService, authService, limiter, filter, publisher, danmaku.NewKafkaProducer(kafkaProducer, cfg.Kafka.DanmakuTopic, log), trafficPolicy)
 	likeService := like.NewService(roomService, redis)
 	viewerService := viewer.NewService(redis, cfg.Engagement.ViewerTTL)
 	statsStore := stats.NewRedisStore(redis)
@@ -95,7 +101,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("api started", "addr", cfg.HTTP.Addr, "milestone", "M6")
+		log.Info("api started", "addr", cfg.HTTP.Addr, "milestone", "M7")
 		errCh <- srv.ListenAndServe()
 	}()
 

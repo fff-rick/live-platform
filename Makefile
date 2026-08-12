@@ -45,3 +45,31 @@ test-m5-kafka-recovery:
 
 smoke-m6:
 	./scripts/m6_observability_smoke.sh
+
+.PHONY: m7-degradation-smoke m7-connection-sweep m7-hotroom m7-slow-consumer m7-like-storm m7-gift-load m7-soak m7-snapshot m7-fault
+m7-degradation-smoke:
+	./scripts/m7_degradation_smoke.sh
+
+m7-connection-sweep:
+	./scripts/m7_connection_sweep.sh
+
+m7-hotroom:
+	./scripts/m7_hotroom.sh
+
+m7-slow-consumer:
+	./scripts/m7_slow_consumer.sh
+
+m7-like-storm:
+	./scripts/m7_like_storm.sh
+
+m7-gift-load:
+	./scripts/m7_gift_load.sh
+
+m7-soak:
+	./scripts/m7_soak.sh
+
+m7-snapshot:
+	./scripts/m7_snapshot.sh
+
+m7-fault:
+	./scripts/m7_fault_injection.sh

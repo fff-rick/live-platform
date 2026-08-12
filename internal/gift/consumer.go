@@ -79,6 +79,7 @@ func (h *ConsumerHandler) Handle(ctx context.Context, rec mq.Record) error {
 		EventID:   envelope.EventID,
 		Type:      "gift",
 		RoomID:    envelope.RoomID,
+		Priority:  "P1",
 		Timestamp: envelope.CreatedAt.UnixMilli(),
 		Data:      json.RawMessage(envelope.Payload),
 	}

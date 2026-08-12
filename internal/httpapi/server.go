@@ -134,7 +134,7 @@ func (s *Server) demo(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "milestone": "M6"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "milestone": "M7"})
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {

@@ -81,3 +81,39 @@ func TestSendDanmakuGuards(t *testing.T) {
 		})
 	}
 }
+
+type fakeTraffic struct {
+	mode      string
+	broadcast bool
+	err       error
+}
+
+func (f fakeTraffic) Decide(context.Context, int64, string) (string, bool, error) {
+	return f.mode, f.broadcast, f.err
+}
+
+func TestSendDanmakuTrafficSamplingSkipsRealtimeButKeepsEvent(t *testing.T) {
+	p := &fakePublisher{}
+	s := NewService(
+		fakeRooms{status: room.StatusLiving},
+		fakeUsers{},
+		fakeLimiter{allowed: true},
+		NewSensitiveFilter(nil),
+		p,
+		NoopProducer{},
+		fakeTraffic{mode: "PROTECT", broadcast: false},
+	)
+	e, err := s.Send(context.Background(), 1, 7, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Broadcasted {
+		t.Fatalf("expected sampled event, got %+v", e)
+	}
+	if e.TrafficMode != "PROTECT" {
+		t.Fatalf("traffic mode=%q", e.TrafficMode)
+	}
+	if p.count != 0 {
+		t.Fatalf("sampled event should not be published, count=%d", p.count)
+	}
+}

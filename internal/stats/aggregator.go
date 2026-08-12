@@ -94,7 +94,7 @@ func (a *Aggregator) Tick(ctx context.Context) error {
 		if delta == 0 && !viewerChanged {
 			continue
 		}
-		wire := realtime.NewEvent(idgen.New(), "stats", roomID, snap)
+		wire := realtime.NewPriorityEvent(idgen.New(), "stats", roomID, "P4", snap)
 		if err := a.publisher.Publish(ctx, realtime.RoomStats(roomID), wire); err != nil {
 			if delta > 0 {
 				_ = a.store.RestoreLikeDelta(ctx, roomID, delta)

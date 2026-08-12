@@ -37,17 +37,23 @@ type Publisher interface {
 	Publish(context.Context, string, any) error
 }
 
+type TrafficPolicy interface {
+	Decide(context.Context, int64, string) (mode string, broadcast bool, err error)
+}
+
 type UserService interface {
 	User(context.Context, int64) (auth.User, error)
 }
 
 type Event struct {
-	MessageID string    `json:"message_id"`
-	RoomID    int64     `json:"room_id"`
-	UserID    int64     `json:"user_id"`
-	Nickname  string    `json:"nickname"`
-	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	MessageID   string    `json:"message_id"`
+	RoomID      int64     `json:"room_id"`
+	UserID      int64     `json:"user_id"`
+	Nickname    string    `json:"nickname"`
+	Content     string    `json:"content"`
+	CreatedAt   time.Time `json:"created_at"`
+	Broadcasted bool      `json:"broadcasted"`
+	TrafficMode string    `json:"traffic_mode"`
 }
 
 type Service struct {
@@ -57,10 +63,15 @@ type Service struct {
 	filter    *SensitiveFilter
 	publisher Publisher
 	producer  EventProducer
+	traffic   TrafficPolicy
 }
 
-func NewService(rooms RoomService, users UserService, limiter Limiter, filter *SensitiveFilter, publisher Publisher, producer EventProducer) *Service {
-	return &Service{rooms: rooms, users: users, limiter: limiter, filter: filter, publisher: publisher, producer: producer}
+func NewService(rooms RoomService, users UserService, limiter Limiter, filter *SensitiveFilter, publisher Publisher, producer EventProducer, policies ...TrafficPolicy) *Service {
+	var traffic TrafficPolicy
+	if len(policies) > 0 {
+		traffic = policies[0]
+	}
+	return &Service{rooms: rooms, users: users, limiter: limiter, filter: filter, publisher: publisher, producer: producer, traffic: traffic}
 }
 
 func (s *Service) Send(ctx context.Context, roomID, userID int64, content string) (Event, error) {
@@ -103,10 +114,22 @@ func (s *Service) Send(ctx context.Context, roomID, userID int64, content string
 	if err != nil {
 		return Event{}, err
 	}
-	e := Event{MessageID: idgen.New(), RoomID: roomID, UserID: userID, Nickname: u.Nickname, Content: content, CreatedAt: time.Now().UTC()}
-	wire := realtime.NewEvent(idgen.New(), "danmaku", roomID, e)
-	if err := s.publisher.Publish(ctx, realtime.RoomStream(roomID), wire); err != nil {
-		return Event{}, err
+	e := Event{MessageID: idgen.New(), RoomID: roomID, UserID: userID, Nickname: u.Nickname, Content: content, CreatedAt: time.Now().UTC(), Broadcasted: true, TrafficMode: "NORMAL"}
+	if s.traffic != nil {
+		mode, broadcast, err := s.traffic.Decide(ctx, roomID, e.MessageID)
+		if err != nil {
+			return Event{}, err
+		}
+		e.Broadcasted = broadcast
+		if mode != "" {
+			e.TrafficMode = mode
+		}
+	}
+	if e.Broadcasted {
+		wire := realtime.NewPriorityEvent(idgen.New(), "danmaku", roomID, "P3", e)
+		if err := s.publisher.Publish(ctx, realtime.RoomStream(roomID), wire); err != nil {
+			return Event{}, err
+		}
 	}
 	if s.producer != nil {
 		// Persistence is best-effort and must not block the realtime broadcast path.

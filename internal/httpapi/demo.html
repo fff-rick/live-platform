@@ -3,18 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Live Platform M6 Demo</title>
+  <title>Live Platform M7 Demo</title>
   <script src="https://unpkg.com/centrifuge@5.7.0/dist/centrifuge.js"></script>
   <style>
     body{font-family:system-ui,sans-serif;max-width:980px;margin:32px auto;padding:0 20px}input,button{padding:8px;margin:4px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.card{border:1px solid #ddd;border-radius:10px;padding:14px;margin:12px 0}pre{background:#111;color:#eee;padding:16px;min-height:260px;overflow:auto}.hint{color:#666;font-size:14px}.metric{font-size:24px;font-weight:700;margin-right:24px}
   </style>
 </head>
 <body>
-  <h1>Live Platform / M6</h1>
-  <p class="hint">M6 增加 Prometheus、Grafana、OpenTelemetry/Tempo、业务指标与跨异步链路 Trace。Centrifugo room channel 已开启短期 History/Recovery；断线重连由客户端和服务端共同完成恢复。</p>
+  <h1>Live Platform / M7</h1>
+  <p class="hint">M7 在 M6 可观测性基础上增加热点房间保护与性能工程工具。业务 Demo 仍用于功能验证；10K/50K/100K 连接、广播、慢消费者、Like/Gift 压测请使用 tools/loadtest、tools/httpload 与 scripts/m7_*.sh。</p>
 
   <div class="card">
-    <strong>M6 Observability</strong>
+    <strong>M7 Performance Engineering</strong>
     <div class="row"><a href="http://localhost:3000" target="_blank">Grafana</a><a href="http://localhost:9091" target="_blank">Prometheus</a><a href="http://localhost:8080/metrics" target="_blank">API Metrics</a><a href="http://localhost:8000/metrics" target="_blank">Centrifugo Metrics</a></div>
     <p class="hint">可在 Grafana Explore 中选择 Tempo 查看 live-api → Outbox → Kafka → live-worker → Centrifugo Trace。</p>
   </div>

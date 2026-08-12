@@ -16,6 +16,7 @@ type Metrics struct {
 	HTTPRequests         *prometheus.CounterVec
 	HTTPDuration         *prometheus.HistogramVec
 	Danmaku              *prometheus.CounterVec
+	DanmakuDegradation   *prometheus.CounterVec
 	Likes                prometheus.Counter
 	GiftOrders           *prometheus.CounterVec
 	RealtimePublish      *prometheus.CounterVec
@@ -39,6 +40,7 @@ func NewMetrics(service string) *Metrics {
 		HTTPRequests:         prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "http_requests_total", Help: "HTTP requests by service, method, route and status."}, []string{"service", "method", "route", "status"}),
 		HTTPDuration:         prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: ns, Name: "http_request_duration_seconds", Help: "HTTP request latency.", Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}}, []string{"service", "method", "route"}),
 		Danmaku:              prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "danmaku_total", Help: "Danmaku requests by result."}, []string{"result"}),
+		DanmakuDegradation:   prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "danmaku_degradation_total", Help: "Danmaku traffic-policy decisions by mode and action."}, []string{"mode", "action"}),
 		Likes:                prometheus.NewCounter(prometheus.CounterOpts{Namespace: ns, Name: "likes_total", Help: "Accepted like count."}),
 		GiftOrders:           prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "gift_orders_total", Help: "Gift API requests by result."}, []string{"result"}),
 		RealtimePublish:      prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "realtime_publish_total", Help: "Centrifugo publish attempts by result."}, []string{"result"}),
@@ -52,11 +54,16 @@ func NewMetrics(service string) *Metrics {
 		KafkaConsumerLag:     prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: ns, Name: "kafka_consumer_lag", Help: "Approximate consumer lag from the fetch high watermark after commit."}, []string{"group", "topic", "partition"}),
 		KafkaBufferedRecords: prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: ns, Name: "kafka_buffered_records", Help: "Records currently buffered in a franz-go client."}, []string{"client", "direction"}),
 	}
-	reg.MustRegister(m.HTTPRequests, m.HTTPDuration, m.Danmaku, m.Likes, m.GiftOrders, m.RealtimePublish, m.StatsBroadcast, m.OutboxPending, m.OutboxPublish, m.OutboxRetries, m.KafkaProduce, m.KafkaProduceDur, m.KafkaConsume, m.KafkaConsumerLag, m.KafkaBufferedRecords)
+	reg.MustRegister(m.HTTPRequests, m.HTTPDuration, m.Danmaku, m.DanmakuDegradation, m.Likes, m.GiftOrders, m.RealtimePublish, m.StatsBroadcast, m.OutboxPending, m.OutboxPublish, m.OutboxRetries, m.KafkaProduce, m.KafkaProduceDur, m.KafkaConsume, m.KafkaConsumerLag, m.KafkaBufferedRecords)
 	// Pre-initialize low-cardinality counters so dashboards do not show "no data" before first traffic.
 	for _, result := range []string{"success", "failed", "rejected", "replay"} {
 		m.Danmaku.WithLabelValues(result).Add(0)
 		m.GiftOrders.WithLabelValues(result).Add(0)
+	}
+	for _, mode := range []string{"NORMAL", "HOT", "PROTECT"} {
+		for _, action := range []string{"broadcast", "sampled"} {
+			m.DanmakuDegradation.WithLabelValues(mode, action).Add(0)
+		}
 	}
 	m.OutboxPending.Set(0)
 	return m
@@ -119,3 +126,7 @@ func (m *Metrics) OutboxPublished(result string) { m.OutboxPublish.WithLabelValu
 func (m *Metrics) OutboxRetried()                { m.OutboxRetries.Inc() }
 
 func (m *Metrics) StatsBroadcasted(result string) { m.StatsBroadcast.WithLabelValues(result).Inc() }
+
+func (m *Metrics) DanmakuDegraded(mode, action string) {
+	m.DanmakuDegradation.WithLabelValues(mode, action).Inc()
+}

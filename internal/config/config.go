@@ -20,6 +20,7 @@ type Config struct {
 	Kafka         KafkaConfig
 	Outbox        OutboxConfig
 	Observability ObservabilityConfig
+	Traffic       TrafficConfig
 }
 
 type HTTPConfig struct{ Addr string }
@@ -49,6 +50,16 @@ type KafkaConfig struct {
 	GiftConsumerGroup    string
 	ConsumerLease        time.Duration
 }
+type TrafficConfig struct {
+	HotViewers         int64
+	ProtectViewers     int64
+	HotDanmakuRate     int64
+	ProtectDanmakuRate int64
+	HotSampleRate      float64
+	ProtectSampleRate  float64
+	RateWindow         time.Duration
+}
+
 type ObservabilityConfig struct {
 	WorkerMetricsAddr string
 	OTelEnabled       bool
@@ -148,6 +159,36 @@ func Load() (Config, error) {
 	if err != nil || otelSampleRatio < 0 || otelSampleRatio > 1 {
 		return Config{}, fmt.Errorf("OTEL_SAMPLE_RATIO must be between 0 and 1")
 	}
+
+	hotViewers, err := strconv.ParseInt(env("DANMAKU_HOT_VIEWERS", "50000"), 10, 64)
+	if err != nil || hotViewers <= 0 {
+		return Config{}, fmt.Errorf("DANMAKU_HOT_VIEWERS must be a positive integer")
+	}
+	protectViewers, err := strconv.ParseInt(env("DANMAKU_PROTECT_VIEWERS", "100000"), 10, 64)
+	if err != nil || protectViewers < hotViewers {
+		return Config{}, fmt.Errorf("DANMAKU_PROTECT_VIEWERS must be >= DANMAKU_HOT_VIEWERS")
+	}
+	hotRate, err := strconv.ParseInt(env("DANMAKU_HOT_RATE", "500"), 10, 64)
+	if err != nil || hotRate <= 0 {
+		return Config{}, fmt.Errorf("DANMAKU_HOT_RATE must be a positive integer")
+	}
+	protectRate, err := strconv.ParseInt(env("DANMAKU_PROTECT_RATE", "2000"), 10, 64)
+	if err != nil || protectRate < hotRate {
+		return Config{}, fmt.Errorf("DANMAKU_PROTECT_RATE must be >= DANMAKU_HOT_RATE")
+	}
+	hotSample, err := strconv.ParseFloat(env("DANMAKU_HOT_SAMPLE_RATE", "0.5"), 64)
+	if err != nil || hotSample <= 0 || hotSample > 1 {
+		return Config{}, fmt.Errorf("DANMAKU_HOT_SAMPLE_RATE must be in (0,1]")
+	}
+	protectSample, err := strconv.ParseFloat(env("DANMAKU_PROTECT_SAMPLE_RATE", "0.2"), 64)
+	if err != nil || protectSample <= 0 || protectSample > hotSample {
+		return Config{}, fmt.Errorf("DANMAKU_PROTECT_SAMPLE_RATE must be in (0,DANMAKU_HOT_SAMPLE_RATE]")
+	}
+	rateWindow, err := time.ParseDuration(env("DANMAKU_RATE_WINDOW", "1s"))
+	if err != nil || rateWindow < time.Millisecond {
+		return Config{}, fmt.Errorf("DANMAKU_RATE_WINDOW must be at least 1ms")
+	}
+
 	var words []string
 	for _, w := range strings.Split(env("DANMAKU_SENSITIVE_WORDS", "spam,banned"), ",") {
 		if w = strings.TrimSpace(w); w != "" {
@@ -177,7 +218,8 @@ func Load() (Config, error) {
 			GiftConsumerGroup:    env("KAFKA_GIFT_CONSUMER_GROUP", "live-gift-realtime-v1"),
 			ConsumerLease:        consumerLease,
 		},
-		Outbox: OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
+		Outbox:  OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
+		Traffic: TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow},
 		Observability: ObservabilityConfig{
 			WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
 			OTelEnabled:       otelEnabled,
