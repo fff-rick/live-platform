@@ -11,6 +11,10 @@ import (
 
 	"github.com/example/live-platform/internal/mq"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	mysqlDriver "github.com/go-sql-driver/mysql"
 )
 
@@ -73,6 +77,10 @@ func (r *Repository) ByRequestID(ctx context.Context, requestID string) (Order, 
 }
 
 func (r *Repository) Create(ctx context.Context, p CreateParams) (Order, bool, error) {
+	ctx, txSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.transaction")
+	txSpan.SetAttributes(attribute.Int64("live.user_id", p.UserID), attribute.Int64("live.room_id", p.RoomID), attribute.Int64("live.gift_id", p.GiftID))
+	defer txSpan.End()
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Order{}, false, err
@@ -95,10 +103,16 @@ func (r *Repository) Create(ctx context.Context, p CreateParams) (Order, bool, e
 	}
 	total := g.Price * p.Count
 
+	_, orderSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.order_insert")
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO gift_orders(order_no, request_id, user_id, anchor_id, room_id, gift_id, gift_count, unit_price, total_amount, status, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(3), NOW(3))`,
 		p.OrderNo, p.RequestID, p.UserID, p.AnchorID, p.RoomID, p.GiftID, p.Count, g.Price, total)
+	if err != nil {
+		orderSpan.RecordError(err)
+		orderSpan.SetStatus(codes.Error, err.Error())
+	}
+	orderSpan.End()
 	if err != nil {
 		if isDuplicateRequest(err) {
 			_ = tx.Rollback()
@@ -120,10 +134,16 @@ VALUES (?, 0, 0, NOW(3))
 ON DUPLICATE KEY UPDATE user_id=user_id`, p.UserID); err != nil {
 		return Order{}, false, err
 	}
+	_, walletSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.wallet_update")
 	res, err := tx.ExecContext(ctx, `
 UPDATE wallets
 SET balance=balance-?, version=version+1, updated_at=NOW(3)
 WHERE user_id=? AND balance>=?`, total, p.UserID, total)
+	if err != nil {
+		walletSpan.RecordError(err)
+		walletSpan.SetStatus(codes.Error, err.Error())
+	}
+	walletSpan.End()
 	if err != nil {
 		return Order{}, false, err
 	}
@@ -162,14 +182,29 @@ VALUES (?, ?, 'GIFT', ?, ?, ?, ?, NOW(3))`,
 	if err != nil {
 		return Order{}, false, err
 	}
-	if _, err := tx.ExecContext(ctx, `
+	_, outboxSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.outbox_insert")
+	_, outboxErr := tx.ExecContext(ctx, `
 INSERT INTO outbox_events(event_id, aggregate_type, aggregate_id, event_type, topic, partition_key, payload, status, retry_count, next_retry_at, created_at)
 VALUES (?, 'GIFT_ORDER', ?, 'gift.sent', ?, ?, ?, 0, 0, NOW(3), NOW(3))`,
-		p.EventID, p.OrderNo, p.GiftTopic, strconv.FormatInt(p.RoomID, 10), payload); err != nil {
-		return Order{}, false, err
+		p.EventID, p.OrderNo, p.GiftTopic, strconv.FormatInt(p.RoomID, 10), payload)
+	if outboxErr != nil {
+		outboxSpan.RecordError(outboxErr)
+		outboxSpan.SetStatus(codes.Error, outboxErr.Error())
 	}
-	if err := tx.Commit(); err != nil {
-		return Order{}, false, err
+	outboxSpan.End()
+	if outboxErr != nil {
+		return Order{}, false, outboxErr
+	}
+
+	_, commitSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.commit")
+	commitErr := tx.Commit()
+	if commitErr != nil {
+		commitSpan.RecordError(commitErr)
+		commitSpan.SetStatus(codes.Error, commitErr.Error())
+	}
+	commitSpan.End()
+	if commitErr != nil {
+		return Order{}, false, commitErr
 	}
 	created, err := r.ByOrderNo(ctx, p.OrderNo)
 	if err != nil {
