@@ -64,18 +64,18 @@
 
 ### M7 — Performance Engineering & Hot Room Protection
 - 独立 Go WebSocket Load Generator（官方 `centrifuge-go` SDK）
-- Connection Sweep：10K → 50K → 100K
+- Connection Sweep：并发连接生成、目标/实际连接速率分离；Round 2 默认先测 10K → 50K
 - 单热点房间 vs 多房间分布对比
-- Server-side Broadcast 压测与端到端延迟采集
-- Slow Consumer 模拟
-- 通用 HTTP Load Generator（Like / Gift）
+- Server-side Broadcast 并发限速压测、目标/实际 publish rate 与 fan-out delivery rate
+- Slow Consumer 模拟，Fast / Slow 客户端延迟与断线分开统计
+- 通用 HTTP Load Generator（Like / Gift），报告记录 target/achieved rate、并发、URL、body、token 数
 - Soak Test / Fault Injection 脚本
 - NORMAL / HOT / PROTECT 热点房间模式
 - 基于 Viewer Count + Danmaku Rate 的实时降级
 - 确定性弹幕采样，关键消息不降级
 - Realtime 消息优先级标记：Gift P1 / Danmaku P3 / Stats P4（用于分类和后续策略，不宣称 Centrifugo 提供通用优先级队列）
 - Centrifugo client queue 限制，保护服务端免受慢消费者无限堆积
-- `benchmark/` 真实性能报告模板，禁止预填虚假数据
+- `benchmark/` 保存原始真实性能报告；`round1-findings.md` 记录第一轮结论与必须重测项
 
 ---
 
@@ -150,26 +150,35 @@ tools/loadtest/
 ```bash
 cd tools/loadtest
 go run . \
+  --scenario hot-room \
   --clients 10000 \
   --rooms 1 \
   --connect-rate 3000 \
+  --connect-concurrency 256 \
   --publish-rate 100 \
+  --publish-concurrency 64 \
+  --message-bytes 256 \
   --duration 60s \
   --report ../../reports/m7/hot-room.json
 ```
 
-报告记录：
+报告现在区分**目标负载**与**实际达到的负载**：
 
 ```text
-connect events / errors
-current connected
-disconnect events
-subscribe errors
-publication count
+connect_rate_target_per_sec / connect_rate_actual_per_sec
+connection_success_rate
+initial_connected / reconnect_events / connected_current
+publish_rate_target_per_sec / publish_rate_actual_per_sec
+fanout_delivery_actual_per_sec
+message_target_bytes
+fast / slow publication count
+fast / slow disconnect count
+fast / slow latency P50 / P95 / P99 / Max
 recovery attempts / recovered
-server publish success / failure
-publication latency P50 / P95 / P99 / Max
+Load Generator hostname / CPU count / Go version
 ```
+
+连接与 publish 都采用“限速 + 并发上限”模式，避免串行压测器本身先成为瓶颈。`connected_current` 使用每客户端原子状态维护，重连不会重复增加当前连接数。
 
 ## HTTP Load Generator
 
@@ -177,36 +186,65 @@ publication latency P50 / P95 / P99 / Max
 tools/httpload/
 ```
 
-用于 Like / Gift 等 HTTP 热路径，支持固定请求速率、并发上限、Bearer Token、唯一 Idempotency-Key、状态码分布和 P50/P95/P99。
+用于 Like / Gift 等 HTTP 热路径，支持固定请求速率、并发上限、单 Bearer Token / token 文件 round-robin、唯一 Idempotency-Key、状态码分布和 P50/P95/P99。报告同时记录 target rate、achieved rate、concurrency、request body、token 数量和 Load Generator 环境，避免 JSON 离开脚本后失去测试语义。
 
 ## 推荐执行顺序
 
+第一轮报告已经放入 `benchmark/raw/round1/`，分析见 `benchmark/round1-findings.md`。Round 2 按已发现瓶颈定向执行：
+
 ```bash
-make m7-degradation-smoke
-make m7-connection-sweep
-make m7-hotroom
+# 1. 单钱包热点 vs 多钱包并发，并保留 MySQL/InnoDB 快照
+make m7-gift-compare
+
+# 2. Hot Room：10→20→30→40→50 publish/s；再测 1K→2K→5K subscribers
+make m7-hotroom-ladder
+
+# 3. Like：20K→50K→100K logical likes/s
+ROOM_ID=... TOKEN=... make m7-like-ladder
+
+# 4. 修复统计后的 slow consumer 重测
 make m7-slow-consumer
 
-ROOM_ID=... TOKEN=... RATE=1000 make m7-like-storm
-ROOM_ID=... TOKEN=... GIFT_ID=... RATE=100 make m7-gift-load
+# 5. 最后再把纯连接推进到 10K→50K
+make m7-connection-sweep
 
 DURATION=6h make m7-soak
-make m7-snapshot  # 保存 docker / Redis / MySQL / Kafka / Prometheus 原始快照
-# 故障脚本最好与持续 loadtest 同时运行，才能测到真实用户影响
+make m7-snapshot
 make m7-fault
 ```
 
-默认 Connection Sweep 是：
+Round 2 默认 Connection Sweep 暂时是：
 
 ```text
-10K → 50K → 100K
+10K → 50K
+```
+
+只有确认 Load Generator 的 `connect_rate_actual_per_sec`、CPU、FD 和 ephemeral port 都不是瓶颈后，再继续 100K。
+
+多份 JSON 可以直接汇总成 Markdown 表：
+
+```bash
+python3 scripts/m7_report_table.py reports/m7/hotroom-ladder/*.json
+python3 scripts/m7_report_table.py reports/m7/gift-single-wallet.json reports/m7/gift-multi-wallet.json
 ```
 
 如果单台压测机的 ephemeral ports、file descriptors、CPU 或网络先成为瓶颈，应使用多台 Load Generator，而不是把客户端机器瓶颈误判成服务端瓶颈。
 
+## Round 1 已确认的问题与 Round 2 修正
+
+第一轮真实报告显示：
+
+- 5K WebSocket 可以稳定保持，但旧工具没有记录 actual connect rate；
+- 1K clients / 50 publish/s 下，100 rooms 的 P99 约 4.61ms，而单 Hot Room P99 约 277ms；
+- Slow Consumer 出现 32s 最大延迟，但旧 `connected_current` 会被 reconnect 重复累加；
+- Like 约 20K logical likes/s 时 P99 约 11ms；
+- Gift 单 token 场景 P99 约 2.41s，但它只能证明单 wallet 热点，不能代表系统 Gift TPS。
+
+因此 Round 2 不直接“优化数据库”或“扩机器”，而是先修测量方法并拆分变量。Gift Repository 现在额外生成 `gift.db.order_insert`、`gift.db.wallet_update`、`gift.db.outbox_insert`、`gift.db.commit` Span，用于在 Tempo 中判断尾延迟具体发生在哪一步。
+
 ## Benchmark 数据纪律
 
-`benchmark/README.md` 只提供报告模板。仓库不会出现类似“单机 100K / P99 30ms”这种未经真实实验的数据。
+`benchmark/` 同时保存原始真实报告、阶段分析和最终容量模板。仓库不会出现类似“单机 100K / P99 30ms”这种未经真实实验的数据。
 
 最终只有真实执行后才能填写：
 
