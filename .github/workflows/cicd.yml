@@ -56,6 +56,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 2
 
       - name: Read and validate the version selected in the merged PR
         id: version
@@ -78,17 +79,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Refuse to overwrite an existing image version
+      - name: Decide whether this revision needs an image build
+        id: image
         env:
           VERSION: ${{ steps.version.outputs.value }}
           IMAGE: ghcr.io/${{ github.repository_owner }}/live-platform
         run: |
-          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-            echo "image version $VERSION already exists; choose a new version in the PR" >&2
-            exit 1
+          previous_version=""
+          if git cat-file -e "$GITHUB_SHA^:deploy/k8s/overlays/demo/kustomization.yaml" 2>/dev/null; then
+            previous_version="$(git show "$GITHUB_SHA^:deploy/k8s/overlays/demo/kustomization.yaml" | sed -n 's/^    newTag: //p')"
           fi
 
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            if [ "$VERSION" != "$previous_version" ]; then
+              echo "image version $VERSION already exists; choose a new version in the PR" >&2
+              exit 1
+            fi
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "reusing existing image $IMAGE:$VERSION for a non-version-changing retry"
+            exit 0
+          fi
+          echo "build=true" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
+        if: steps.image.outputs.build == 'true'
         with:
           context: .
           push: true
