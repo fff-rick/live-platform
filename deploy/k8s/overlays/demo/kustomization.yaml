@@ -3,7 +3,7 @@ kind: Kustomization
 
 namespace: live-platform
 resources:
-  - ../../base
+  # - ../../base
   - sealed-runtime.yaml
 
 images:
