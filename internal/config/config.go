@@ -15,6 +15,7 @@ type Config struct {
 	Centrifugo    CentrifugoConfig
 	Auth          AuthConfig
 	Danmaku       DanmakuConfig
+	Gift          GiftConfig
 	Engagement    EngagementConfig
 	Wallet        WalletConfig
 	Kafka         KafkaConfig
@@ -40,7 +41,16 @@ type AuthConfig struct {
 	JWTSecret string
 	TokenTTL  time.Duration
 }
-type DanmakuConfig struct{ SensitiveWords []string }
+type DanmakuConfig struct {
+	SensitiveWords []string
+	UserRateLimit  int
+	UserRateWindow time.Duration
+}
+type GiftConfig struct {
+	MaxCountPerRequest int64
+	UserRateLimit      int
+	UserRateWindow     time.Duration
+}
 type WalletConfig struct{ DevCreditEnabled bool }
 type KafkaConfig struct {
 	Brokers              []string
@@ -58,6 +68,11 @@ type TrafficConfig struct {
 	HotSampleRate      float64
 	ProtectSampleRate  float64
 	RateWindow         time.Duration
+	AdaptiveEnabled    bool
+	TargetFanoutRate   float64
+	HotFanoutRate      float64
+	ProtectFanoutRate  float64
+	MinSampleRate      float64
 }
 
 type ObservabilityConfig struct {
@@ -120,6 +135,27 @@ func Load() (Config, error) {
 	devCreditEnabled, err := strconv.ParseBool(env("ENABLE_DEV_WALLET_CREDIT", "false"))
 	if err != nil {
 		return Config{}, fmt.Errorf("ENABLE_DEV_WALLET_CREDIT: %w", err)
+	}
+
+	danmakuUserRateLimit, err := strconv.Atoi(env("DANMAKU_USER_RATE_LIMIT", "5"))
+	if err != nil || danmakuUserRateLimit <= 0 {
+		return Config{}, fmt.Errorf("DANMAKU_USER_RATE_LIMIT must be a positive integer")
+	}
+	danmakuUserRateWindow, err := time.ParseDuration(env("DANMAKU_USER_RATE_WINDOW", "10s"))
+	if err != nil || danmakuUserRateWindow <= 0 {
+		return Config{}, fmt.Errorf("DANMAKU_USER_RATE_WINDOW must be a positive duration")
+	}
+	giftMaxCount, err := strconv.ParseInt(env("GIFT_MAX_COUNT_PER_REQUEST", "100"), 10, 64)
+	if err != nil || giftMaxCount <= 0 || giftMaxCount > 10000 {
+		return Config{}, fmt.Errorf("GIFT_MAX_COUNT_PER_REQUEST must be between 1 and 10000")
+	}
+	giftUserRateLimit, err := strconv.Atoi(env("GIFT_USER_RATE_LIMIT", "10"))
+	if err != nil || giftUserRateLimit <= 0 {
+		return Config{}, fmt.Errorf("GIFT_USER_RATE_LIMIT must be a positive integer")
+	}
+	giftUserRateWindow, err := time.ParseDuration(env("GIFT_USER_RATE_WINDOW", "1s"))
+	if err != nil || giftUserRateWindow <= 0 {
+		return Config{}, fmt.Errorf("GIFT_USER_RATE_WINDOW must be a positive duration")
 	}
 
 	kafkaBrokers := splitCSV(env("KAFKA_BROKERS", "kafka:9092"))
@@ -188,6 +224,26 @@ func Load() (Config, error) {
 	if err != nil || rateWindow < time.Millisecond {
 		return Config{}, fmt.Errorf("DANMAKU_RATE_WINDOW must be at least 1ms")
 	}
+	adaptiveEnabled, err := strconv.ParseBool(env("DANMAKU_ADAPTIVE_ENABLED", "true"))
+	if err != nil {
+		return Config{}, fmt.Errorf("DANMAKU_ADAPTIVE_ENABLED: %w", err)
+	}
+	targetFanout, err := strconv.ParseFloat(env("DANMAKU_TARGET_FANOUT_RATE", "25000"), 64)
+	if err != nil || targetFanout <= 0 {
+		return Config{}, fmt.Errorf("DANMAKU_TARGET_FANOUT_RATE must be positive")
+	}
+	hotFanout, err := strconv.ParseFloat(env("DANMAKU_HOT_FANOUT_RATE", "30000"), 64)
+	if err != nil || hotFanout < targetFanout {
+		return Config{}, fmt.Errorf("DANMAKU_HOT_FANOUT_RATE must be >= DANMAKU_TARGET_FANOUT_RATE")
+	}
+	protectFanout, err := strconv.ParseFloat(env("DANMAKU_PROTECT_FANOUT_RATE", "40000"), 64)
+	if err != nil || protectFanout < hotFanout {
+		return Config{}, fmt.Errorf("DANMAKU_PROTECT_FANOUT_RATE must be >= DANMAKU_HOT_FANOUT_RATE")
+	}
+	minSampleRate, err := strconv.ParseFloat(env("DANMAKU_MIN_SAMPLE_RATE", "0.05"), 64)
+	if err != nil || minSampleRate <= 0 || minSampleRate > 1 {
+		return Config{}, fmt.Errorf("DANMAKU_MIN_SAMPLE_RATE must be in (0,1]")
+	}
 
 	var words []string
 	for _, w := range strings.Split(env("DANMAKU_SENSITIVE_WORDS", "spam,banned"), ",") {
@@ -207,7 +263,8 @@ func Load() (Config, error) {
 			SubscriptionTokenTTL: subTTL,
 		},
 		Auth:       AuthConfig{JWTSecret: env("AUTH_JWT_SECRET", "dev-app-jwt-secret-change-me"), TokenTTL: authTTL},
-		Danmaku:    DanmakuConfig{SensitiveWords: words},
+		Danmaku:    DanmakuConfig{SensitiveWords: words, UserRateLimit: danmakuUserRateLimit, UserRateWindow: danmakuUserRateWindow},
+		Gift:       GiftConfig{MaxCountPerRequest: giftMaxCount, UserRateLimit: giftUserRateLimit, UserRateWindow: giftUserRateWindow},
 		Engagement: EngagementConfig{ViewerTTL: viewerTTL, StatsInterval: statsInterval, ActiveRoomWindow: activeRoomWindow, ActiveRoomBatch: activeRoomBatch},
 		Wallet:     WalletConfig{DevCreditEnabled: devCreditEnabled},
 		Kafka: KafkaConfig{
@@ -219,7 +276,7 @@ func Load() (Config, error) {
 			ConsumerLease:        consumerLease,
 		},
 		Outbox:  OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
-		Traffic: TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow},
+		Traffic: TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow, AdaptiveEnabled: adaptiveEnabled, TargetFanoutRate: targetFanout, HotFanoutRate: hotFanout, ProtectFanoutRate: protectFanout, MinSampleRate: minSampleRate},
 		Observability: ObservabilityConfig{
 			WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
 			OTelEnabled:       otelEnabled,

@@ -10,7 +10,16 @@ CREDIT="${CREDIT:-10000000}"
 GIFT_ID="${GIFT_ID:-1}"
 STAMP="$(date +%s)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+restore_api() {
+  rm -rf "$TMP"
+  docker compose up -d --force-recreate live-api >/dev/null || true
+}
+trap restore_api EXIT
+
+# This script compares raw DB contention. Raise the abuse guard so 429s do not
+# hide the wallet-row behavior being measured.
+GIFT_USER_RATE_LIMIT=100000 GIFT_USER_RATE_WINDOW=1s docker compose up -d --force-recreate live-api >/dev/null
+until curl -fsS "$BASE_URL/ready" >/dev/null 2>&1; do sleep 1; done
 mkdir -p reports/m7
 TOKENS="$TMP/tokens.txt"
 

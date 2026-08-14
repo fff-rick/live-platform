@@ -173,6 +173,46 @@
           "sort": "none"
         }
       }
+    },
+    {
+      "id": 9,
+      "title": "Gift rate-limited requests",
+      "type": "timeseries",
+      "description": "Per-user gift abuse protection. Idempotent replays are resolved before this limiter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(live_gift_rate_limited_total[1m])",
+          "legendFormat": "rate limited"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
     }
   ]
 }

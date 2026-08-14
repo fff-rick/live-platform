@@ -69,7 +69,7 @@ func (c *Centrifugo) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("centrifugo health: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("centrifugo health status=%d", resp.StatusCode)
 	}
@@ -112,7 +112,7 @@ func (c *Centrifugo) Publish(ctx context.Context, channel string, data any) erro
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("centrifugo publish: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		result = "failed"

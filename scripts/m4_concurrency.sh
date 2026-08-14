@@ -5,7 +5,16 @@ BASE_URL="${BASE_URL:-http://localhost:8080}"
 USERNAME="m4c_$(date +%s)_$RANDOM"
 PASSWORD="password123"
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+restore_api() {
+  rm -rf "$TMP"
+  docker compose up -d --force-recreate live-api >/dev/null || true
+}
+trap restore_api EXIT
+
+# This test validates wallet atomicity, not abuse throttling. Raise the M7 Gift
+# limiter temporarily so concurrent requests reach the MySQL transaction.
+GIFT_USER_RATE_LIMIT=100000 GIFT_USER_RATE_WINDOW=1s docker compose up -d --force-recreate live-api >/dev/null
+until curl -fsS "$BASE_URL/ready" >/dev/null 2>&1; do sleep 1; done
 
 REGISTER=$(curl -fsS -X POST "$BASE_URL/api/v1/auth/register" -H 'Content-Type: application/json' \
   -d "{\"username\":\"$USERNAME\",\"nickname\":\"并发测试\",\"password\":\"$PASSWORD\"}")

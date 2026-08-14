@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - services.yaml
+  - workloads.yaml
+  - migrations.yaml
+  - centrifugo-config.yaml
+
+configMapGenerator:
+  - name: live-platform-config
+    literals:
+      - HTTP_ADDR=:8080
+      - REDIS_ADDR=redis:6379
+      - REDIS_DB=0
+      - CENTRIFUGO_API_URL=http://centrifugo:8000/api
+      - CENTRIFUGO_TOKEN_TTL=1h
+      - CENTRIFUGO_SUBSCRIPTION_TOKEN_TTL=5m
+      - AUTH_TOKEN_TTL=24h
+      - DANMAKU_SENSITIVE_WORDS=spam,banned
+      - DANMAKU_USER_RATE_LIMIT=5
+      - DANMAKU_USER_RATE_WINDOW=10s
+      - DANMAKU_HOT_VIEWERS=50000
+      - DANMAKU_PROTECT_VIEWERS=100000
+      - DANMAKU_HOT_RATE=500
+      - DANMAKU_PROTECT_RATE=2000
+      - DANMAKU_HOT_SAMPLE_RATE=0.5
+      - DANMAKU_PROTECT_SAMPLE_RATE=0.2
+      - DANMAKU_RATE_WINDOW=1s
+      - DANMAKU_ADAPTIVE_ENABLED=true
+      - DANMAKU_TARGET_FANOUT_RATE=25000
+      - DANMAKU_HOT_FANOUT_RATE=30000
+      - DANMAKU_PROTECT_FANOUT_RATE=40000
+      - DANMAKU_MIN_SAMPLE_RATE=0.05
+      - GIFT_MAX_COUNT_PER_REQUEST=100
+      - GIFT_USER_RATE_LIMIT=10
+      - GIFT_USER_RATE_WINDOW=1s
+      - VIEWER_TTL=90s
+      - STATS_INTERVAL=200ms
+      - ACTIVE_ROOM_WINDOW=3m
+      - ACTIVE_ROOM_BATCH=1000
+      - ENABLE_DEV_WALLET_CREDIT=true
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_DANMAKU_TOPIC=live.danmaku.v1
+      - KAFKA_GIFT_TOPIC=live.gift.v1
+      - KAFKA_DANMAKU_CONSUMER_GROUP=live-danmaku-persist-v1
+      - KAFKA_GIFT_CONSUMER_GROUP=live-gift-realtime-v1
+      - KAFKA_CONSUMER_LEASE=30s
+      - OUTBOX_POLL_INTERVAL=100ms
+      - OUTBOX_BATCH_SIZE=100
+      - OUTBOX_LEASE=30s
+      - OUTBOX_PRODUCE_TIMEOUT=5s
+      - WORKER_METRICS_ADDR=:9090
+      - OTEL_ENABLED=false
+      - OTEL_INSECURE=true
+      - OTEL_SAMPLE_RATIO=0
+      - DEPLOYMENT_ENVIRONMENT=demo

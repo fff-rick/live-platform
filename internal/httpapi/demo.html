@@ -66,8 +66,10 @@
       <label>Idempotency-Key <input id="idempotencyKey" size="38"></label>
       <button id="newKey">新 Key</button>
       <button id="sendGift">送礼物</button>
+      <button id="giftTap">🎁 连点礼物</button>
+      <span class="hint">待聚合 <span id="pendingGiftCount">0</span></span>
     </div>
-    <p class="hint">重复使用同一个 Key + 相同参数应返回同一订单且只扣一次款；同 Key 改参数应返回冲突。</p>
+    <p class="hint">“连点礼物”会在浏览器端 300ms 内合并为一个 count 请求，最多 100 个；普通“送礼物”仍用于验证 Idempotency-Key。</p>
   </div>
 
   <pre id="log"></pre>
@@ -76,7 +78,7 @@ const $ = id => document.getElementById(id);
 const log = (...args) => { $('log').textContent += args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; $('log').scrollTop = $('log').scrollHeight; };
 let accessToken = localStorage.getItem('live_access_token') || '';
 let currentUser = JSON.parse(localStorage.getItem('live_user') || 'null');
-let centrifuge, heartbeatTimer, likeTimer, pendingLikes = 0;
+let centrifuge, heartbeatTimer, likeTimer, giftTimer, pendingLikes = 0, pendingGiftCount = 0, pendingGiftID = 0;
 const seenEventIds = new Set();
 const newIdempotencyKey = () => (crypto.randomUUID ? crypto.randomUUID() : `req-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 function authHeaders(extra={}) { return accessToken ? {...extra, Authorization:`Bearer ${accessToken}`} : extra; }
@@ -149,6 +151,24 @@ $('sendGift').onclick = async () => {
     const body=await api(`/api/v1/rooms/${$('room').value}/gifts`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':$('idempotencyKey').value},body:JSON.stringify({gift_id:Number($('gift').value),count:Number($('giftCount').value)})});
     log('gift result',body); await refreshWallet();
   } catch(e){log('gift error',e.body||e);}
+};
+async function flushGiftCombo(){
+  if(giftTimer){clearTimeout(giftTimer); giftTimer=null;}
+  const count=pendingGiftCount, giftID=pendingGiftID;
+  pendingGiftCount=0; pendingGiftID=0; $('pendingGiftCount').textContent='0';
+  if(!count) return;
+  const key=newIdempotencyKey();
+  try {
+    const body=await api(`/api/v1/rooms/${$('room').value}/gifts`,{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify({gift_id:giftID,count})});
+    log(`gift combo x${count}`,body); await refreshWallet();
+  } catch(e){log('gift combo error',e.body||e);}
+}
+$('giftTap').onclick = () => {
+  const giftID=Number($('gift').value);
+  if(pendingGiftCount && pendingGiftID!==giftID) flushGiftCombo();
+  pendingGiftID=giftID; pendingGiftCount++; $('pendingGiftCount').textContent=String(pendingGiftCount);
+  if(pendingGiftCount>=100){ flushGiftCombo(); return; }
+  if(!giftTimer) giftTimer=setTimeout(flushGiftCombo,300);
 };
 loadGifts(); refreshWallet();
 </script>

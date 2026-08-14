@@ -1,0 +1,173 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 2Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: mysql}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: mysql}}
+  template:
+    metadata: {labels: {app: mysql}}
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          args: [--character-set-server=utf8mb4, --collation-server=utf8mb4_0900_ai_ci]
+          ports: [{name: mysql, containerPort: 3306}]
+          env:
+            - {name: MYSQL_DATABASE, value: live}
+            - {name: MYSQL_USER, value: live}
+            - name: MYSQL_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: MYSQL_PASSWORD}}
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: MYSQL_ROOT_PASSWORD}}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/mysql}
+            - {name: migrations, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+          readinessProbe: {exec: {command: [sh, -c, 'mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"']}, initialDelaySeconds: 15, periodSeconds: 5}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: mysql-data}}
+        - {name: migrations, configMap: {name: live-platform-migrations}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redis}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports: [{name: redis, containerPort: 6379}]
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          readinessProbe: {exec: {command: [redis-cli, ping]}, initialDelaySeconds: 3, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: kafka}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: kafka}}
+  template:
+    metadata: {labels: {app: kafka}}
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:4.3.1
+          ports: [{name: kafka, containerPort: 9092}]
+          env:
+            - {name: KAFKA_NODE_ID, value: '1'}
+            - {name: KAFKA_PROCESS_ROLES, value: broker,controller}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: PLAINTEXT://kafka:9092}
+            - {name: KAFKA_LISTENERS, value: CONTROLLER://:29093,PLAINTEXT://:9092}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: PLAINTEXT}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: CONTROLLER}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: 1@localhost:29093}
+            - {name: CLUSTER_ID, value: 4L6g3nShT-eMCtK--X86sw}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: '1'}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: '1'}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: '1'}
+            - {name: KAFKA_AUTO_CREATE_TOPICS_ENABLE, value: 'true'}
+            - {name: KAFKA_NUM_PARTITIONS, value: '6'}
+            - {name: KAFKA_LOG_DIRS, value: /var/lib/kafka/data}
+            - {name: KAFKA_HEAP_OPTS, value: '-Xms256m -Xmx512m'}
+          volumeMounts: [{name: data, mountPath: /var/lib/kafka/data}]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: '1', memory: 1Gi}
+          readinessProbe: {exec: {command: [sh, -c, '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list']}, initialDelaySeconds: 30, periodSeconds: 10}
+      volumes: [{name: data, persistentVolumeClaim: {claimName: kafka-data}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: centrifugo}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: centrifugo}}
+  template:
+    metadata: {labels: {app: centrifugo}}
+    spec:
+      containers:
+        - name: centrifugo
+          image: centrifugo/centrifugo:v6.9.1
+          args: [centrifugo, -c, /centrifugo/config.json]
+          ports: [{name: centrifugo, containerPort: 8000}]
+          env:
+            - name: CENTRIFUGO_HTTP_API_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_API_KEY}}
+            - name: CENTRIFUGO_CLIENT_TOKEN_HMAC_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_TOKEN_SECRET}}
+          volumeMounts: [{name: config, mountPath: /centrifugo, readOnly: true}]
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 512Mi}
+          readinessProbe: {httpGet: {path: /health, port: centrifugo}, initialDelaySeconds: 5, periodSeconds: 5}
+      volumes: [{name: config, configMap: {name: centrifugo-config}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-api}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: live-api}}
+  template:
+    metadata: {labels: {app: live-api}}
+    spec:
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-api
+          image: live-platform
+          command: [live-api]
+          ports: [{name: http, containerPort: 8080}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: live-worker}}
+  template:
+    metadata: {labels: {app: live-worker}}
+    spec:
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker
+          image: live-platform
+          command: [live-worker]
+          ports: [{name: metrics, containerPort: 9090}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
