@@ -99,17 +99,17 @@ Viewer Count + Danmaku Rate
  Centrifugo
 ```
 
-默认开发阈值：
+当前默认策略同时保留 Viewer / 请求速率安全阈值，并新增 Round 2 基准得到的 fan-out 容量阈值：
 
 ```text
-HOT:     viewers >= 50,000  OR danmaku >= 500 / s
-PROTECT: viewers >= 100,000 OR danmaku >= 2,000 / s
+HOT:     viewer >= 50,000 OR raw rate >= 500/window OR estimated fan-out >= 30K/s
+PROTECT: viewer >= 100,000 OR raw rate >= 2,000/window OR estimated fan-out >= 40K/s
 
-HOT sample rate:     50%
-PROTECT sample rate: 20%
+adaptive target fan-out: 25K/s
+minimum sample rate:      5%
 ```
 
-这些值只是默认配置，不是容量结论。最终阈值必须根据 M7 真实压测调整。采样基于 `message_id` hash，因此同一个事件的决策稳定，不依赖进程本地随机数。被采样的弹幕仍可尝试进入 Kafka 异步持久化，但不会进入全房间广播。
+当进入 HOT / PROTECT 后，默认不再固定丢 50% / 80%，而是按 `target_fanout / estimated_fanout` 动态计算采样率。`DANMAKU_ADAPTIVE_ENABLED=false` 时才回退到旧的 50% / 20% 固定采样，主要用于 A/B 与回滚。上述 fan-out 数字来自当前 Round 2 测试环境，不是 Centrifugo 的通用上限。采样仍基于 `message_id` hash，保证多 API 实例对同一事件做出稳定决策。
 
 可先执行 `make m7-degradation-smoke`，脚本会临时把速率阈值降低到 2/4，用真实 HTTP 弹幕链路依次触发 NORMAL → HOT → PROTECT，验收后自动恢复默认阈值。这个 Smoke 只验证降级逻辑，不代表生产阈值。
 
@@ -802,13 +802,23 @@ M7 所有性能结论必须由真实 Benchmark 产生，禁止预填或编造数
 # M7 Environment Variables
 
 ```text
+DANMAKU_USER_RATE_LIMIT=5
+DANMAKU_USER_RATE_WINDOW=10s
 DANMAKU_HOT_VIEWERS=50000
 DANMAKU_PROTECT_VIEWERS=100000
 DANMAKU_HOT_RATE=500
 DANMAKU_PROTECT_RATE=2000
-DANMAKU_HOT_SAMPLE_RATE=0.5
-DANMAKU_PROTECT_SAMPLE_RATE=0.2
 DANMAKU_RATE_WINDOW=1s
+DANMAKU_ADAPTIVE_ENABLED=true
+DANMAKU_TARGET_FANOUT_RATE=25000
+DANMAKU_HOT_FANOUT_RATE=30000
+DANMAKU_PROTECT_FANOUT_RATE=40000
+DANMAKU_MIN_SAMPLE_RATE=0.05
+DANMAKU_HOT_SAMPLE_RATE=0.5        # legacy fallback
+DANMAKU_PROTECT_SAMPLE_RATE=0.2    # legacy fallback
+GIFT_MAX_COUNT_PER_REQUEST=100
+GIFT_USER_RATE_LIMIT=10
+GIFT_USER_RATE_WINDOW=1s
 ```
 
 # M7 Done Definition
@@ -821,3 +831,26 @@ M7 的代码交付完成不代表已经获得容量数字。真正完成压测�
 - 压测客户端本身不存在明显资源瓶颈，或已采用多机压测；
 - `benchmark/` 中填写的是实际数据而不是估算值；
 - 给出最大容量、建议安全容量以及首要瓶颈。
+
+## M7 Optimization Round
+
+Round 2 benchmarking identified two concrete limits in the current test environment: hot-channel fan-out begins a clear tail-latency knee around 30K–40K deliveries/s, while a single wallet row saturates near 90 strong-consistency gift transactions/s under pathological same-account load. See `benchmark/round2-findings.md` for retained evidence.
+
+The optimization round adds:
+
+- adaptive danmaku sampling using estimated fan-out, with benchmark-derived but configurable 25K target / 30K HOT / 40K PROTECT defaults;
+- per-user Gift rate limiting (`GIFT_USER_RATE_LIMIT`, default 10/s);
+- bounded Gift combo requests (`GIFT_MAX_COUNT_PER_REQUEST`, default 100);
+- browser-side 300 ms Gift click aggregation;
+- idempotent Gift replay before rate limiting;
+- A/B hot-room benchmark and multi-wallet platform Gift ladder.
+
+Run:
+
+```bash
+make m7-gift-optimization-smoke
+make m7-hotroom-adaptive-ab
+make m7-gift-platform-ladder
+```
+
+For raw DB-capacity tests, `m7-gift-compare` and `m7-gift-platform-ladder` temporarily raise the per-user Gift limiter and restore the normal API configuration when finished. Do not use those relaxed limits as production defaults.

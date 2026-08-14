@@ -1,0 +1,109 @@
+name: CI and controlled delivery
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: live-platform-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11
+          verify: true
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Pre-build image without exporting one
+        run: docker buildx build --output=type=cacheonly .
+
+  publish-and-sync:
+    name: Publish the PR-selected version and trigger Argo CD
+    needs: quality-gate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Read and validate the version selected in the merged PR
+        id: version
+        run: |
+          mapfile -t tags < <(sed -n 's/^    newTag: //p' deploy/k8s/overlays/demo/kustomization.yaml)
+          if [ "${#tags[@]}" -ne 1 ]; then
+            echo "exactly one newTag must be present in the demo overlay" >&2
+            exit 1
+          fi
+          VERSION="${tags[0]}"
+          if ! [[ "$VERSION" =~ ^v[0-9]+(\.[0-9]+){1,2}([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "version must resemble v1.0, v1.0.0, or v1.0.0-rc.1" >&2
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse to overwrite an existing image version
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/live-platform
+        run: |
+          if docker manifest inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "image version $VERSION already exists; choose a new version in the PR" >&2
+            exit 1
+          fi
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/live-platform:${{ steps.version.outputs.value }}
+
+      - name: Sync the merged revision through Argo CD
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        run: |
+          test -n "$ARGOCD_SERVER" && test -n "$ARGOCD_AUTH_TOKEN" || {
+            echo "ARGOCD_SERVER and ARGOCD_AUTH_TOKEN repository secrets are required" >&2
+            exit 1
+          }
+          docker run --rm -e ARGOCD_AUTH_TOKEN \
+            quay.io/argoproj/argocd:v3.4.5 \
+            app sync live-platform-demo --server "$ARGOCD_SERVER" --insecure \
+            --prune --timeout 300

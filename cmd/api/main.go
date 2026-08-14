@@ -80,8 +80,10 @@ func main() {
 		HotViewers: cfg.Traffic.HotViewers, ProtectViewers: cfg.Traffic.ProtectViewers,
 		HotDanmakuRate: cfg.Traffic.HotDanmakuRate, ProtectDanmakuRate: cfg.Traffic.ProtectDanmakuRate,
 		HotSampleRate: cfg.Traffic.HotSampleRate, ProtectSampleRate: cfg.Traffic.ProtectSampleRate, RateWindow: cfg.Traffic.RateWindow,
+		AdaptiveEnabled: cfg.Traffic.AdaptiveEnabled, TargetFanoutRate: cfg.Traffic.TargetFanoutRate,
+		HotFanoutRate: cfg.Traffic.HotFanoutRate, ProtectFanoutRate: cfg.Traffic.ProtectFanoutRate, MinSampleRate: cfg.Traffic.MinSampleRate,
 	}, metrics)
-	danmakuService := danmaku.NewService(roomService, authService, limiter, filter, publisher, danmaku.NewKafkaProducer(kafkaProducer, cfg.Kafka.DanmakuTopic, log), trafficPolicy)
+	danmakuService := danmaku.NewService(roomService, authService, limiter, filter, publisher, danmaku.NewKafkaProducer(kafkaProducer, cfg.Kafka.DanmakuTopic, log), cfg.Danmaku.UserRateLimit, cfg.Danmaku.UserRateWindow, trafficPolicy)
 	likeService := like.NewService(roomService, redis)
 	viewerService := viewer.NewService(redis, cfg.Engagement.ViewerTTL)
 	statsStore := stats.NewRedisStore(redis)
@@ -89,7 +91,7 @@ func main() {
 	walletRepo := wallet.NewRepository(mysql)
 	walletService := wallet.NewService(walletRepo, cfg.Wallet.DevCreditEnabled)
 	giftRepo := gift.NewRepository(mysql)
-	giftService := gift.NewService(giftRepo, roomService, cfg.Kafka.GiftTopic)
+	giftService := gift.NewService(giftRepo, roomService, limiter, gift.Config{MaxCountPerRequest: cfg.Gift.MaxCountPerRequest, UserRateLimit: cfg.Gift.UserRateLimit, UserRateWindow: cfg.Gift.UserRateWindow}, cfg.Kafka.GiftTopic)
 
 	api := httpapi.New(httpapi.Deps{
 		Log: log, MySQL: mysql, Redis: redis, Centrifugo: publisher, Metrics: metrics,

@@ -38,7 +38,7 @@ type Publisher interface {
 }
 
 type TrafficPolicy interface {
-	Decide(context.Context, int64, string) (mode string, broadcast bool, err error)
+	Decide(context.Context, int64, string) (mode string, broadcast bool, sampleRate float64, estimatedFanout float64, err error)
 }
 
 type UserService interface {
@@ -46,32 +46,42 @@ type UserService interface {
 }
 
 type Event struct {
-	MessageID   string    `json:"message_id"`
-	RoomID      int64     `json:"room_id"`
-	UserID      int64     `json:"user_id"`
-	Nickname    string    `json:"nickname"`
-	Content     string    `json:"content"`
-	CreatedAt   time.Time `json:"created_at"`
-	Broadcasted bool      `json:"broadcasted"`
-	TrafficMode string    `json:"traffic_mode"`
+	MessageID       string    `json:"message_id"`
+	RoomID          int64     `json:"room_id"`
+	UserID          int64     `json:"user_id"`
+	Nickname        string    `json:"nickname"`
+	Content         string    `json:"content"`
+	CreatedAt       time.Time `json:"created_at"`
+	Broadcasted     bool      `json:"broadcasted"`
+	TrafficMode     string    `json:"traffic_mode"`
+	SampleRate      float64   `json:"sample_rate"`
+	EstimatedFanout float64   `json:"estimated_fanout_per_sec"`
 }
 
 type Service struct {
-	rooms     RoomService
-	users     UserService
-	limiter   Limiter
-	filter    *SensitiveFilter
-	publisher Publisher
-	producer  EventProducer
-	traffic   TrafficPolicy
+	rooms          RoomService
+	users          UserService
+	limiter        Limiter
+	filter         *SensitiveFilter
+	publisher      Publisher
+	producer       EventProducer
+	traffic        TrafficPolicy
+	userRateLimit  int
+	userRateWindow time.Duration
 }
 
-func NewService(rooms RoomService, users UserService, limiter Limiter, filter *SensitiveFilter, publisher Publisher, producer EventProducer, policies ...TrafficPolicy) *Service {
+func NewService(rooms RoomService, users UserService, limiter Limiter, filter *SensitiveFilter, publisher Publisher, producer EventProducer, userRateLimit int, userRateWindow time.Duration, policies ...TrafficPolicy) *Service {
 	var traffic TrafficPolicy
 	if len(policies) > 0 {
 		traffic = policies[0]
 	}
-	return &Service{rooms: rooms, users: users, limiter: limiter, filter: filter, publisher: publisher, producer: producer, traffic: traffic}
+	if userRateLimit <= 0 {
+		userRateLimit = 5
+	}
+	if userRateWindow <= 0 {
+		userRateWindow = 10 * time.Second
+	}
+	return &Service{rooms: rooms, users: users, limiter: limiter, filter: filter, publisher: publisher, producer: producer, traffic: traffic, userRateLimit: userRateLimit, userRateWindow: userRateWindow}
 }
 
 func (s *Service) Send(ctx context.Context, roomID, userID int64, content string) (Event, error) {
@@ -100,7 +110,7 @@ func (s *Service) Send(ctx context.Context, roomID, userID int64, content string
 	if muted {
 		return Event{}, ErrMuted
 	}
-	allowed, err := s.limiter.Allow(ctx, "live:limit:danmaku:user:"+itoa(userID), 5, 10*time.Second)
+	allowed, err := s.limiter.Allow(ctx, "live:limit:danmaku:user:"+itoa(userID), s.userRateLimit, s.userRateWindow)
 	if err != nil {
 		return Event{}, err
 	}
@@ -114,13 +124,15 @@ func (s *Service) Send(ctx context.Context, roomID, userID int64, content string
 	if err != nil {
 		return Event{}, err
 	}
-	e := Event{MessageID: idgen.New(), RoomID: roomID, UserID: userID, Nickname: u.Nickname, Content: content, CreatedAt: time.Now().UTC(), Broadcasted: true, TrafficMode: "NORMAL"}
+	e := Event{MessageID: idgen.New(), RoomID: roomID, UserID: userID, Nickname: u.Nickname, Content: content, CreatedAt: time.Now().UTC(), Broadcasted: true, TrafficMode: "NORMAL", SampleRate: 1}
 	if s.traffic != nil {
-		mode, broadcast, err := s.traffic.Decide(ctx, roomID, e.MessageID)
+		mode, broadcast, sampleRate, estimatedFanout, err := s.traffic.Decide(ctx, roomID, e.MessageID)
 		if err != nil {
 			return Event{}, err
 		}
 		e.Broadcasted = broadcast
+		e.SampleRate = sampleRate
+		e.EstimatedFanout = estimatedFanout
 		if mode != "" {
 			e.TrafficMode = mode
 		}

@@ -556,8 +556,11 @@ func (s *Server) sendGift(w http.ResponseWriter, r *http.Request, userID int64) 
 	if err != nil {
 		if s.metrics != nil {
 			result := "failed"
-			if errors.Is(err, gift.ErrInvalidCount) || errors.Is(err, gift.ErrInvalidRequestID) || errors.Is(err, gift.ErrGiftNotFound) || errors.Is(err, gift.ErrGiftOffline) || errors.Is(err, gift.ErrInsufficientBalance) || errors.Is(err, gift.ErrIdempotencyConflict) || errors.Is(err, room.ErrNotFound) || errors.Is(err, room.ErrNotLiving) || errors.Is(err, room.ErrBanned) {
+			if errors.Is(err, gift.ErrInvalidCount) || errors.Is(err, gift.ErrInvalidRequestID) || errors.Is(err, gift.ErrGiftNotFound) || errors.Is(err, gift.ErrGiftOffline) || errors.Is(err, gift.ErrInsufficientBalance) || errors.Is(err, gift.ErrIdempotencyConflict) || errors.Is(err, gift.ErrRateLimited) || errors.Is(err, room.ErrNotFound) || errors.Is(err, room.ErrNotLiving) || errors.Is(err, room.ErrBanned) {
 				result = "rejected"
+			}
+			if errors.Is(err, gift.ErrRateLimited) {
+				s.metrics.GiftRateLimited.Inc()
 			}
 			s.metrics.GiftOrders.WithLabelValues(result).Inc()
 		}
@@ -574,6 +577,8 @@ func (s *Server) sendGift(w http.ResponseWriter, r *http.Request, userID int64) 
 			writeError(w, http.StatusConflict, "INSUFFICIENT_BALANCE", err.Error())
 		case errors.Is(err, gift.ErrIdempotencyConflict):
 			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err.Error())
+		case errors.Is(err, gift.ErrRateLimited):
+			writeError(w, http.StatusTooManyRequests, "GIFT_RATE_LIMITED", err.Error())
 		case errors.Is(err, room.ErrNotFound), errors.Is(err, room.ErrNotLiving), errors.Is(err, room.ErrBanned):
 			handleRoomError(w, err)
 		default:

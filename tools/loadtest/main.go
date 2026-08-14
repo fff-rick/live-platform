@@ -142,9 +142,10 @@ type result struct {
 }
 
 type payload struct {
-	Seq     int64  `json:"seq"`
-	SentAt  int64  `json:"sent_at_unix_nano"`
-	Padding string `json:"padding,omitempty"`
+	Seq       int64  `json:"seq"`
+	SentAt    int64  `json:"sent_at_unix_nano"`
+	Timestamp int64  `json:"timestamp"`
+	Padding   string `json:"padding,omitempty"`
 }
 
 func main() {
@@ -358,13 +359,21 @@ func makeClient(c config, userID string, roomID int64, slow bool, ctr *counters,
 			ctr.fastPublications.Add(1)
 		}
 		var p payload
-		if json.Unmarshal(e.Data, &p) == nil && p.SentAt > 0 {
-			v := time.Since(time.Unix(0, p.SentAt))
-			allLat.add(v)
-			if slow {
-				slowLat.add(v)
-			} else {
-				fastLat.add(v)
+		if json.Unmarshal(e.Data, &p) == nil {
+			var sent time.Time
+			if p.SentAt > 0 {
+				sent = time.Unix(0, p.SentAt)
+			} else if p.Timestamp > 0 {
+				sent = time.UnixMilli(p.Timestamp)
+			}
+			if !sent.IsZero() {
+				v := time.Since(sent)
+				allLat.add(v)
+				if slow {
+					slowLat.add(v)
+				} else {
+					fastLat.add(v)
+				}
 			}
 		}
 		if slow {

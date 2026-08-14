@@ -43,7 +43,7 @@ func (f *fakePublisher) Publish(context.Context, string, any) error { f.count++;
 
 func TestSendDanmakuSuccess(t *testing.T) {
 	p := &fakePublisher{}
-	s := NewService(fakeRooms{status: room.StatusLiving}, fakeUsers{}, fakeLimiter{allowed: true}, NewSensitiveFilter([]string{"bad"}), p, NoopProducer{})
+	s := NewService(fakeRooms{status: room.StatusLiving}, fakeUsers{}, fakeLimiter{allowed: true}, NewSensitiveFilter([]string{"bad"}), p, NoopProducer{}, 5, 10*time.Second)
 	e, err := s.Send(context.Background(), 1, 7, "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestSendDanmakuGuards(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewService(tc.rooms, fakeUsers{}, tc.limiter, NewSensitiveFilter([]string{"bad"}), &fakePublisher{}, NoopProducer{})
+			s := NewService(tc.rooms, fakeUsers{}, tc.limiter, NewSensitiveFilter([]string{"bad"}), &fakePublisher{}, NoopProducer{}, 5, 10*time.Second)
 			_, err := s.Send(context.Background(), 1, 7, tc.text)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err=%v want=%v", err, tc.want)
@@ -88,8 +88,8 @@ type fakeTraffic struct {
 	err       error
 }
 
-func (f fakeTraffic) Decide(context.Context, int64, string) (string, bool, error) {
-	return f.mode, f.broadcast, f.err
+func (f fakeTraffic) Decide(context.Context, int64, string) (string, bool, float64, float64, error) {
+	return f.mode, f.broadcast, 0.25, 100000, f.err
 }
 
 func TestSendDanmakuTrafficSamplingSkipsRealtimeButKeepsEvent(t *testing.T) {
@@ -101,6 +101,8 @@ func TestSendDanmakuTrafficSamplingSkipsRealtimeButKeepsEvent(t *testing.T) {
 		NewSensitiveFilter(nil),
 		p,
 		NoopProducer{},
+		5,
+		10*time.Second,
 		fakeTraffic{mode: "PROTECT", broadcast: false},
 	)
 	e, err := s.Send(context.Background(), 1, 7, "hello")

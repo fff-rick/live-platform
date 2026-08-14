@@ -82,3 +82,17 @@ m7-snapshot:
 
 m7-fault:
 	./scripts/m7_fault_injection.sh
+
+.PHONY: m7-gift-optimization-smoke m7-gift-platform-ladder m7-hotroom-adaptive-ab
+m7-gift-optimization-smoke:
+	./scripts/m7_gift_optimization_smoke.sh
+
+m7-gift-platform-ladder:
+	./scripts/m7_gift_multi_ladder.sh
+
+m7-hotroom-adaptive-ab:
+	./scripts/m7_hotroom_adaptive_ab.sh
+
+.PHONY: m7-optimization-report
+m7-optimization-report:
+	python3 scripts/m7_optimization_compare.py
