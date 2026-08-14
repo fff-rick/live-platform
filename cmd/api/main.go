@@ -54,9 +54,9 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer mysql.Close()
+	defer func() { _ = mysql.Close() }()
 	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer redis.Close()
+	defer func() { _ = redis.Close() }()
 
 	appTokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	cfTokens := cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL)
