@@ -69,6 +69,9 @@ kind: Deployment
 metadata: {name: kafka}
 spec:
   replicas: 1
+  # A single KRaft broker has one node.id and one data volume.  It must not be
+  # started alongside its predecessor during an update.
+  strategy: {type: Recreate}
   selector: {matchLabels: {app: kafka}}
   template:
     metadata: {labels: {app: kafka}}
