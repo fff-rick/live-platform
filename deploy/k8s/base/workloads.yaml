@@ -98,7 +98,12 @@ spec:
           resources:
             requests: {cpu: 250m, memory: 512Mi}
             limits: {cpu: '1', memory: 1Gi}
-          readinessProbe: {exec: {command: [sh, -c, '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list']}, initialDelaySeconds: 30, periodSeconds: 10}
+          readinessProbe:
+            tcpSocket: {port: kafka}
+            initialDelaySeconds: 10
+            timeoutSeconds: 3
+            periodSeconds: 10
+            failureThreshold: 6
       volumes: [{name: data, persistentVolumeClaim: {claimName: kafka-data}}]
 ---
 apiVersion: apps/v1
