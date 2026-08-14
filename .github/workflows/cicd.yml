@@ -117,7 +117,7 @@ jobs:
             echo "ARGOCD_SERVER and ARGOCD_AUTH_TOKEN repository secrets are required" >&2
             exit 1
           }
-          docker run --rm -e ARGOCD_AUTH_TOKEN \
+          docker run --rm -e ARGOCD_AUTH_TOKEN --entrypoint argocd \
             quay.io/argoproj/argocd:v3.4.5 \
             app sync live-platform-demo --server "$ARGOCD_SERVER" --insecure \
             --prune --timeout 300
