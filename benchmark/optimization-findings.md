@@ -51,9 +51,14 @@ InnoDB row-lock deltas were approximately:
 
 Row locking contributes under load, but the average lock wait is far below the observed ~0.7–1.0 second P50 at saturation. This does **not** support blaming wallet-row locks alone. The next experiment measures `database/sql` pool pressure directly.
 
-## Final M7 decision gates
+## Final M7 decision gate
 
-1. `make m7-kafka-danmaku-smoke` — Kafka async produce + consumer persistence must succeed with zero producer failures.
-2. `make m7-gift-dbpool-ab` — compare max-open connections 20/40/80 at 500 and 1,000 target TPS using `sql.DB.Stats()` metrics.
-3. Re-run `make m7-hotroom-adaptive-ab` with Kafka healthy and archive the final A/B.
-4. If the above are stable, freeze M7 capacity findings and proceed to M8.
+Kafka correctness and DB-pool A/B are understood. The only remaining blocking capacity experiment is `make m7-gift-1000-wallet-capacity`. See `benchmark/m7-finalization-checklist.md`.
+
+## Finalization update — Kafka correctness and DB-pool A/B
+
+Kafka correctness smoke now passes end-to-end: 100 completed HTTP danmaku requests produced 100 Kafka records, 0 producer failures, and 100 MySQL persisted rows. Treat this strictly as a correctness result; the local single-broker / replication-factor-1 topology does not validate Kafka HA or replica durability.
+
+The corrected Gift DB-pool A/B selected **40 max-open / 20 max-idle** as the current default. Pool 20 suffers excessive Go-side connection waiting; pool 80 can raise extreme-load throughput but pushes materially more contention into MySQL and worsens the 500 TPS latency case. The 1,000 TPS target is still unmet.
+
+The remaining ambiguity is wallet cardinality: the A/B used only 100 active wallets. M7 therefore has one final blocking experiment, `make m7-gift-1000-wallet-capacity`, which keeps pool=40 fixed and tests 1,000 wallets at 500/1,000/1,500 target TPS. After that result, freeze M7 rather than continuing to tune for a larger headline number.

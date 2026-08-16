@@ -7,9 +7,7 @@ POOLS="${POOLS:-20 40 80}"
 RATES="${RATES:-500 1000}"
 CONCURRENCY="${CONCURRENCY:-512}"
 DURATION="${DURATION:-60s}"
-# wallet.DevCredit caps a single development credit at 100,000,000.
-# This is still far above the default 100 users × 1,000 gifts/s × 60s run.
-CREDIT="${CREDIT:-100000000}"
+CREDIT="${CREDIT:-1000000000}"
 GIFT_ID="${GIFT_ID:-1}"
 OTEL_SAMPLE_RATIO_BENCHMARK="${OTEL_SAMPLE_RATIO_BENCHMARK:-1}"
 STAMP="$(date +%s)"

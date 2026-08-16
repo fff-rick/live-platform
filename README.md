@@ -833,8 +833,8 @@ DANMAKU_PROTECT_SAMPLE_RATE=0.2    # legacy fallback
 GIFT_MAX_COUNT_PER_REQUEST=100
 GIFT_USER_RATE_LIMIT=10
 GIFT_USER_RATE_WINDOW=1s
-MYSQL_MAX_OPEN_CONNS=20
-MYSQL_MAX_IDLE_CONNS=10
+MYSQL_MAX_OPEN_CONNS=40
+MYSQL_MAX_IDLE_CONNS=20
 MYSQL_CONN_MAX_LIFETIME=30m
 ```
 
@@ -872,16 +872,27 @@ make m7-gift-platform-ladder
 
 The first Optimization A/B reduced the 5K-listener hot-room WS P99 from ~27.7s to ~585ms and removed steady-state reconnects, but its Kafka side-path was unhealthy. The retained evidence and interpretation are in `benchmark/optimization-findings.md`.
 
-M7 finalization adds two mandatory gates:
+M7 finalization originally added Kafka correctness and DB-pool A/B gates; both are now understood. The remaining blocking capacity isolation is:
 
 ```bash
-# Validate the async Kafka context fix and actual MySQL persistence.
-make m7-kafka-danmaku-smoke
-
-# Compare sql.DB MaxOpenConns 20/40/80 at 500 and 1000 target Gift TPS.
-make m7-gift-dbpool-ab
+# Final isolation: fixed pool=40, 1,000 active wallets, 500/1000/1500 TPS.
+make m7-gift-1000-wallet-capacity
 ```
 
 `ProduceAsync` deliberately detaches from HTTP request cancellation using `context.WithoutCancel`: request completion must not cancel an already-buffered best-effort Kafka record. The record remains bounded by franz-go's delivery timeout, and trace values are retained. Kafka failures are classified in `live_kafka_produce_errors_total{topic,reason}`.
 
-For raw DB-capacity tests, `m7-gift-compare`, `m7-gift-platform-ladder`, and `m7-gift-dbpool-ab` temporarily raise the per-user Gift limiter and restore the normal API configuration when finished. Do not use those relaxed limits as production defaults.
+For raw DB-capacity tests, `m7-gift-compare`, `m7-gift-platform-ladder`, `m7-gift-dbpool-ab`, and `m7-gift-1000-wallet-capacity` temporarily raise the per-user Gift limiter and restore the normal API configuration when finished. Do not use those relaxed limits as production defaults.
+
+### M7 final wallet-cardinality isolation
+
+The corrected DB-pool A/B selected `MYSQL_MAX_OPEN_CONNS=40` / `MYSQL_MAX_IDLE_CONNS=20` as the current environment default: pool 20 spent too much time waiting for a Go `sql.DB` connection, while pool 80 increased database-side contention without improving the 500 TPS latency target. Pool 80 remains an experimental throughput setting, not a production default.
+
+The final Gift capacity isolation keeps the pool fixed at 40 and changes only active-wallet cardinality:
+
+```bash
+make m7-gift-1000-wallet-capacity
+```
+
+Defaults: 1,000 funded wallets, target rates `500 1000 1500`, 512 HTTP concurrency, 60 seconds per case. The script samples `sql.DB` pool state every second and captures InnoDB row-lock counters before/after each case. Results are written under `reports/m7/gift-1000-wallet-capacity/` with a generated `summary.md`.
+
+This experiment exists to distinguish **100-wallet hotspot saturation** from the **absolute Gift platform ceiling**. Do not claim a platform TPS limit until this isolation result is available.

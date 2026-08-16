@@ -1,47 +1,81 @@
 # M7 Capacity Decision
 
-This file separates **measured baseline facts** from capacity still pending Optimization Round re-test. Hardware/topology-specific thresholds must not be presented as universal framework limits.
+This file separates **measured facts in the current test environment** from capacity that is still unproven. None of the numbers below should be presented as universal Centrifugo/MySQL limits.
 
-## Preliminary safe capacity from corrected Round 2 baseline
+## Realtime / Hot Room
 
-- Centrifugo safe connections/node: **not established yet**. 5,000 total connections were previously stable, but the load generator and SUT must be separated before a node-capacity claim.
-- Hot-room subscribers: **1,000 subscribers at 20 publish/s validated** with P99 ~34 ms. 2,000 at the same rate reached P99 ~230 ms and is outside the current <100 ms objective.
-- Hot-room publish rate: **30 publish/s validated at 1,000 subscribers** with P99 ~45 ms. 40/s reached ~124 ms.
-- Baseline safe fan-out working target: **~25K–30K deliveries/s** for current environment/headroom; corrected test knee appears between 30K and 40K/s.
-- Like accepted rate: preliminary Round 1 result ~20K logical likes/s with API P99 ~11 ms; 50K/100K ladder still pending.
-- Gift platform TPS: **~200 TPS across 100 wallets is the current <100 ms P99 validated point**. The platform throughput plateau is ~480–500 TPS in the current topology, but at that level P99 is ~2.4–2.75 s and is not a safe latency target.
-- Single-wallet Gift throughput: saturates around **~90 TPS** under pathological same-account load; this is a per-wallet serialization boundary, not platform capacity.
+- Centrifugo safe connections/node: **not established yet**. A separate load-generator host is still required before making a per-node connection-capacity claim.
+- Corrected Round 2 baseline: 1,000 subscribers × 30 publish/s stayed around P99 ~45 ms; 1,000 × 40/s rose to ~124 ms.
+- Current working fan-out target: **25K deliveries/s**, HOT around 30K/s, PROTECT around 40K/s; all are configurable benchmark-derived thresholds.
+- Adaptive protection materially reduced the overloaded 5K-listener case, but the final production-style capacity claim must preserve the exact topology and side-path health used for the measurement.
 
-## Bottleneck order observed so far
+## Kafka danmaku async path
 
-1. Single hot-channel fan-out / network-and-client delivery pressure.
-2. Same-wallet MySQL row serialization under abusive per-user Gift rates.
-3. Platform Gift transaction path saturates around ~480–500 TPS in the current topology; exact limiting layer is pending `sql.DB` pool A/B.
-4. Kafka danmaku async side-path had a request-context lifecycle bug; final capacity claims require the post-fix full-pipeline re-test.
+Correctness smoke: **PASS**.
 
-## Optimization policy
+Measured closure:
 
-- Danmaku target fan-out: 25K/s (configurable)
-- HOT: 30K/s (configurable)
-- PROTECT: 40K/s (configurable)
+```text
+100 HTTP completed
+100 Kafka produce success
+0 Kafka produce failure
+100 MySQL persisted
+```
+
+This is a correctness result only. The development topology is one broker with topic replication factor 1, so it is **not** evidence of Kafka HA, replica durability, or capacity.
+
+## Gift transaction path
+
+### Per-wallet serialization
+
+A pathological same-wallet workload saturates near ~90 strong-consistency transactions/s. This is a deliberate serialization boundary of one balance row, not total platform capacity. M7 mitigates abusive clicking with per-user request limiting and Gift combo aggregation rather than weakening wallet correctness.
+
+### Database-pool A/B
+
+The measured 100-wallet A/B showed:
+
+| MaxOpen | Target TPS | Actual TPS | P95 | P99 | Avg Go DB connection wait | InnoDB row-lock waits Δ |
+|---:|---:|---:|---:|---:|---:|---:|
+| 20 | 500 | 458 | 1.970 s | 2.580 s | 226 ms | 2,595 |
+| 40 | 500 | 493 | **287 ms** | **456 ms** | **25 ms** | **276** |
+| 80 | 500 | 492 | 586 ms | 899 ms | 56 ms | 1,386 |
+| 20 | 1000 | 471 | 2.179 s | 2.901 s | 261 ms | 2,756 |
+| 40 | 1000 | 518 | 1.976 s | 2.627 s | 225 ms | 5,674 |
+| 80 | 1000 | 616 | 1.646 s | 2.124 s | 171 ms | 12,142 |
+
+Decision for the current environment:
+
+- default `MYSQL_MAX_OPEN_CONNS=40`
+- default `MYSQL_MAX_IDLE_CONNS=20`
+- 80 connections remain an experimental max-throughput setting, not the default
+
+All effective cases reached their configured pool ceiling. Increasing the pool reduces Go-side connection waiting, but excessive concurrency pushes pressure into InnoDB row-lock contention. The 1,000 TPS target has **not** been achieved.
+
+### Absolute Gift platform capacity
+
+**Not established yet.** The existing high-load matrix used only 100 active wallets, which can itself create repeated balance-row hotspots. The final isolation experiment keeps pool=40 fixed and increases active-wallet cardinality to 1,000:
+
+```bash
+make m7-gift-1000-wallet-capacity
+```
+
+Targets: 500, 1000 and 1500 TPS. This experiment is the final M7 blocking capacity gate.
+
+## Current default policy
+
+- MySQL pool: 40 max open / 20 max idle
+- Danmaku target fan-out: 25K/s
+- HOT: 30K/s
+- PROTECT: 40K/s
 - Adaptive sample floor: 5%
-- Gift per-user request guard: 10 requests/s by default
-- Gift combo max: 100 per transaction by default
+- Gift per-user request guard: 10 requests/s
+- Gift combo max: 100 per transaction
 
-## Re-test conditions
+## M7 freeze condition
 
-Re-run capacity/A-B tests when any of these change materially:
+After the 1,000-wallet isolation result:
 
-- Centrifugo node count or Redis topology;
-- NIC / host CPU / kernel limits;
-- message size or history settings;
-- API / DB instance count or MySQL storage;
-- load generator moves to a separate host (required before final connection-capacity claim).
-
-## Remaining decision gates
-
-1. `make m7-kafka-danmaku-smoke` — verify Kafka async produce and danmaku persistence after the context-lifecycle fix.
-2. `make m7-gift-dbpool-ab` — test MaxOpenConns 20/40/80 at 500/1000 target TPS and inspect WaitCount/WaitDuration.
-3. Re-run `make m7-hotroom-adaptive-ab` with Kafka healthy and freeze final A/B evidence.
-4. Like 20K/50K/100K ladder.
-5. Separate load-generator host, then 10K → 50K → 100K connection campaign.
+1. record the measured ceiling and limiting resource without extrapolation;
+2. do not keep tuning M7 simply to obtain a larger headline number;
+3. move unresolved scale boundaries into M8/production-capacity notes;
+4. proceed to M8.

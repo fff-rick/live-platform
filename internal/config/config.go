@@ -104,11 +104,11 @@ type EngagementConfig struct {
 }
 
 func Load() (Config, error) {
-	mysqlMaxOpenConns, err := strconv.Atoi(env("MYSQL_MAX_OPEN_CONNS", "20"))
+	mysqlMaxOpenConns, err := strconv.Atoi(env("MYSQL_MAX_OPEN_CONNS", "40"))
 	if err != nil || mysqlMaxOpenConns <= 0 {
 		return Config{}, fmt.Errorf("MYSQL_MAX_OPEN_CONNS must be a positive integer")
 	}
-	mysqlMaxIdleConns, err := strconv.Atoi(env("MYSQL_MAX_IDLE_CONNS", "10"))
+	mysqlMaxIdleConns, err := strconv.Atoi(env("MYSQL_MAX_IDLE_CONNS", "20"))
 	if err != nil || mysqlMaxIdleConns < 0 || mysqlMaxIdleConns > mysqlMaxOpenConns {
 		return Config{}, fmt.Errorf("MYSQL_MAX_IDLE_CONNS must be between 0 and MYSQL_MAX_OPEN_CONNS")
 	}

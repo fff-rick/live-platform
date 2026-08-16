@@ -93,7 +93,7 @@ m7-gift-platform-ladder:
 m7-hotroom-adaptive-ab:
 	./scripts/m7_hotroom_adaptive_ab.sh
 
-.PHONY: m7-optimization-report m7-kafka-danmaku-smoke m7-gift-dbpool-ab
+.PHONY: m7-optimization-report m7-kafka-danmaku-smoke m7-gift-dbpool-ab m7-gift-1000-wallet-capacity
 m7-optimization-report:
 	python3 scripts/m7_optimization_compare.py
 
@@ -103,3 +103,7 @@ m7-kafka-danmaku-smoke:
 
 m7-gift-dbpool-ab:
 	./scripts/m7_gift_dbpool_ab.sh
+
+# Final M7 platform-capacity isolation: 1000 wallets, fixed DB pool=40.
+m7-gift-1000-wallet-capacity:
+	./scripts/m7_gift_1000_wallet_capacity.sh

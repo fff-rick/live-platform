@@ -56,9 +56,7 @@ FOR UPDATE SKIP LOCKED`, staleBefore, batch)
 	for rows.Next() {
 		var e Event
 		if err := rows.Scan(&e.ID, &e.EventID, &e.AggregateType, &e.AggregateID, &e.EventType, &e.Topic, &e.PartitionKey, &e.Payload, &e.RetryCount); err != nil {
-			if closeErr := rows.Close(); closeErr != nil {
-				return nil, closeErr
-			}
+			rows.Close()
 			return nil, err
 		}
 		events = append(events, e)

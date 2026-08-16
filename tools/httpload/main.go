@@ -219,7 +219,7 @@ func loadTokens(single, path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer f.Close()
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		v := strings.TrimSpace(s.Text())
