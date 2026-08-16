@@ -25,7 +25,12 @@ type Config struct {
 }
 
 type HTTPConfig struct{ Addr string }
-type MySQLConfig struct{ DSN string }
+type MySQLConfig struct {
+	DSN             string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
 type RedisConfig struct {
 	Addr, Password string
 	DB             int
@@ -99,6 +104,19 @@ type EngagementConfig struct {
 }
 
 func Load() (Config, error) {
+	mysqlMaxOpenConns, err := strconv.Atoi(env("MYSQL_MAX_OPEN_CONNS", "20"))
+	if err != nil || mysqlMaxOpenConns <= 0 {
+		return Config{}, fmt.Errorf("MYSQL_MAX_OPEN_CONNS must be a positive integer")
+	}
+	mysqlMaxIdleConns, err := strconv.Atoi(env("MYSQL_MAX_IDLE_CONNS", "10"))
+	if err != nil || mysqlMaxIdleConns < 0 || mysqlMaxIdleConns > mysqlMaxOpenConns {
+		return Config{}, fmt.Errorf("MYSQL_MAX_IDLE_CONNS must be between 0 and MYSQL_MAX_OPEN_CONNS")
+	}
+	mysqlConnMaxLifetime, err := time.ParseDuration(env("MYSQL_CONN_MAX_LIFETIME", "30m"))
+	if err != nil || mysqlConnMaxLifetime <= 0 {
+		return Config{}, fmt.Errorf("MYSQL_CONN_MAX_LIFETIME must be a positive duration")
+	}
+
 	db, err := strconv.Atoi(env("REDIS_DB", "0"))
 	if err != nil {
 		return Config{}, fmt.Errorf("REDIS_DB: %w", err)
@@ -252,8 +270,13 @@ func Load() (Config, error) {
 		}
 	}
 	return Config{
-		HTTP:  HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
-		MySQL: MySQLConfig{DSN: env("MYSQL_DSN", "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4")},
+		HTTP: HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
+		MySQL: MySQLConfig{
+			DSN:             env("MYSQL_DSN", "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4"),
+			MaxOpenConns:    mysqlMaxOpenConns,
+			MaxIdleConns:    mysqlMaxIdleConns,
+			ConnMaxLifetime: mysqlConnMaxLifetime,
+		},
 		Redis: RedisConfig{Addr: env("REDIS_ADDR", "redis:6379"), Password: os.Getenv("REDIS_PASSWORD"), DB: db},
 		Centrifugo: CentrifugoConfig{
 			APIURL:               env("CENTRIFUGO_API_URL", "http://centrifugo:8000/api"),

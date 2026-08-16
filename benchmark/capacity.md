@@ -9,14 +9,15 @@ This file separates **measured baseline facts** from capacity still pending Opti
 - Hot-room publish rate: **30 publish/s validated at 1,000 subscribers** with P99 ~45 ms. 40/s reached ~124 ms.
 - Baseline safe fan-out working target: **~25K–30K deliveries/s** for current environment/headroom; corrected test knee appears between 30K and 40K/s.
 - Like accepted rate: preliminary Round 1 result ~20K logical likes/s with API P99 ~11 ms; 50K/100K ladder still pending.
-- Gift platform TPS: **~200 TPS across 100 wallets validated** with P99 ~92 ms. 500/1000/2000 TPS pending.
+- Gift platform TPS: **~200 TPS across 100 wallets is the current <100 ms P99 validated point**. The platform throughput plateau is ~480–500 TPS in the current topology, but at that level P99 is ~2.4–2.75 s and is not a safe latency target.
 - Single-wallet Gift throughput: saturates around **~90 TPS** under pathological same-account load; this is a per-wallet serialization boundary, not platform capacity.
 
 ## Bottleneck order observed so far
 
 1. Single hot-channel fan-out / network-and-client delivery pressure.
 2. Same-wallet MySQL row serialization under abusive per-user Gift rates.
-3. Platform-level Gift / Redis / Kafka / MySQL bottleneck: **TBD; next ladder required**.
+3. Platform Gift transaction path saturates around ~480–500 TPS in the current topology; exact limiting layer is pending `sql.DB` pool A/B.
+4. Kafka danmaku async side-path had a request-context lifecycle bug; final capacity claims require the post-fix full-pipeline re-test.
 
 ## Optimization policy
 
@@ -39,7 +40,8 @@ Re-run capacity/A-B tests when any of these change materially:
 
 ## Remaining decision gates
 
-1. `make m7-hotroom-adaptive-ab` — prove optimization reduces fan-out/tail latency versus baseline.
-2. `make m7-gift-platform-ladder` — find platform Gift knee at 500/1000/2000 TPS.
-3. Like 20K/50K/100K ladder.
-4. Separate load-generator host, then 10K → 50K → 100K connection campaign.
+1. `make m7-kafka-danmaku-smoke` — verify Kafka async produce and danmaku persistence after the context-lifecycle fix.
+2. `make m7-gift-dbpool-ab` — test MaxOpenConns 20/40/80 at 500/1000 target TPS and inspect WaitCount/WaitDuration.
+3. Re-run `make m7-hotroom-adaptive-ab` with Kafka healthy and freeze final A/B evidence.
+4. Like 20K/50K/100K ladder.
+5. Separate load-generator host, then 10K → 50K → 100K connection campaign.

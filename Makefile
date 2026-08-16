@@ -93,6 +93,13 @@ m7-gift-platform-ladder:
 m7-hotroom-adaptive-ab:
 	./scripts/m7_hotroom_adaptive_ab.sh
 
-.PHONY: m7-optimization-report
+.PHONY: m7-optimization-report m7-kafka-danmaku-smoke m7-gift-dbpool-ab
 m7-optimization-report:
 	python3 scripts/m7_optimization_compare.py
+
+# M7 final optimization validation
+m7-kafka-danmaku-smoke:
+	./scripts/m7_kafka_danmaku_smoke.sh
+
+m7-gift-dbpool-ab:
+	./scripts/m7_gift_dbpool_ab.sh

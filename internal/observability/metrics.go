@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 type Metrics struct {
 	registry *prometheus.Registry
+	service  string
 
 	HTTPRequests          *prometheus.CounterVec
 	HTTPDuration          *prometheus.HistogramVec
@@ -28,6 +30,7 @@ type Metrics struct {
 	OutboxPublish         *prometheus.CounterVec
 	OutboxRetries         prometheus.Counter
 	KafkaProduce          *prometheus.CounterVec
+	KafkaProduceErrors    *prometheus.CounterVec
 	KafkaProduceDur       *prometheus.HistogramVec
 	KafkaConsume          *prometheus.CounterVec
 	KafkaConsumerLag      *prometheus.GaugeVec
@@ -40,6 +43,7 @@ func NewMetrics(service string) *Metrics {
 	const ns = "live"
 	m := &Metrics{
 		registry:              reg,
+		service:               service,
 		HTTPRequests:          prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "http_requests_total", Help: "HTTP requests by service, method, route and status."}, []string{"service", "method", "route", "status"}),
 		HTTPDuration:          prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: ns, Name: "http_request_duration_seconds", Help: "HTTP request latency.", Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}}, []string{"service", "method", "route"}),
 		Danmaku:               prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "danmaku_total", Help: "Danmaku requests by result."}, []string{"result"}),
@@ -55,12 +59,13 @@ func NewMetrics(service string) *Metrics {
 		OutboxPublish:         prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "outbox_publish_total", Help: "Outbox publish attempts by result."}, []string{"result"}),
 		OutboxRetries:         prometheus.NewCounter(prometheus.CounterOpts{Namespace: ns, Name: "outbox_retry_total", Help: "Outbox publish retries."}),
 		KafkaProduce:          prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "kafka_produce_total", Help: "Kafka produce attempts by topic and result."}, []string{"topic", "result"}),
+		KafkaProduceErrors:    prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "kafka_produce_errors_total", Help: "Kafka produce failures by topic and low-cardinality reason."}, []string{"topic", "reason"}),
 		KafkaProduceDur:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: ns, Name: "kafka_produce_duration_seconds", Help: "Kafka synchronous/async delivery latency.", Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}}, []string{"topic"}),
 		KafkaConsume:          prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "kafka_consume_total", Help: "Kafka consumed records by group, topic and result."}, []string{"group", "topic", "result"}),
 		KafkaConsumerLag:      prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: ns, Name: "kafka_consumer_lag", Help: "Approximate consumer lag from the fetch high watermark after commit."}, []string{"group", "topic", "partition"}),
 		KafkaBufferedRecords:  prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: ns, Name: "kafka_buffered_records", Help: "Records currently buffered in a franz-go client."}, []string{"client", "direction"}),
 	}
-	reg.MustRegister(m.HTTPRequests, m.HTTPDuration, m.Danmaku, m.DanmakuDegradation, m.DanmakuFanoutEstimate, m.DanmakuSampleRate, m.Likes, m.GiftOrders, m.GiftRateLimited, m.RealtimePublish, m.StatsBroadcast, m.OutboxPending, m.OutboxPublish, m.OutboxRetries, m.KafkaProduce, m.KafkaProduceDur, m.KafkaConsume, m.KafkaConsumerLag, m.KafkaBufferedRecords)
+	reg.MustRegister(m.HTTPRequests, m.HTTPDuration, m.Danmaku, m.DanmakuDegradation, m.DanmakuFanoutEstimate, m.DanmakuSampleRate, m.Likes, m.GiftOrders, m.GiftRateLimited, m.RealtimePublish, m.StatsBroadcast, m.OutboxPending, m.OutboxPublish, m.OutboxRetries, m.KafkaProduce, m.KafkaProduceErrors, m.KafkaProduceDur, m.KafkaConsume, m.KafkaConsumerLag, m.KafkaBufferedRecords)
 	// Pre-initialize low-cardinality counters so dashboards do not show "no data" before first traffic.
 	for _, result := range []string{"success", "failed", "rejected", "replay"} {
 		m.Danmaku.WithLabelValues(result).Add(0)
@@ -73,6 +78,18 @@ func NewMetrics(service string) *Metrics {
 	}
 	m.OutboxPending.Set(0)
 	return m
+}
+
+func (m *Metrics) RegisterDBPool(pool string, stats func() sql.DBStats) {
+	labels := prometheus.Labels{"service": m.service, "pool": pool}
+	m.registry.MustRegister(
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "live", Name: "db_pool_max_open_connections", Help: "Configured maximum open database connections.", ConstLabels: labels}, func() float64 { return float64(stats().MaxOpenConnections) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "live", Name: "db_pool_open_connections", Help: "Current open database connections.", ConstLabels: labels}, func() float64 { return float64(stats().OpenConnections) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "live", Name: "db_pool_in_use_connections", Help: "Database connections currently in use.", ConstLabels: labels}, func() float64 { return float64(stats().InUse) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "live", Name: "db_pool_idle_connections", Help: "Database connections currently idle.", ConstLabels: labels}, func() float64 { return float64(stats().Idle) }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "live", Name: "db_pool_wait_total", Help: "Total waits for a database connection because the pool was exhausted.", ConstLabels: labels}, func() float64 { return float64(stats().WaitCount) }),
+		prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "live", Name: "db_pool_wait_duration_seconds_total", Help: "Total time spent waiting for a database connection.", ConstLabels: labels}, func() float64 { return stats().WaitDuration.Seconds() }),
+	)
 }
 
 func (m *Metrics) Handler() http.Handler {
@@ -112,6 +129,9 @@ func (w *statusWriter) WriteHeader(code int) {
 func (m *Metrics) KafkaProduced(topic, result string, duration time.Duration) {
 	m.KafkaProduce.WithLabelValues(topic, result).Inc()
 	m.KafkaProduceDur.WithLabelValues(topic).Observe(duration.Seconds())
+}
+func (m *Metrics) KafkaProduceFailed(topic, reason string) {
+	m.KafkaProduceErrors.WithLabelValues(topic, reason).Inc()
 }
 func (m *Metrics) KafkaConsumed(group, topic, result string) {
 	m.KafkaConsume.WithLabelValues(group, topic, result).Inc()

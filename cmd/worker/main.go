@@ -45,14 +45,25 @@ func main() {
 	defer shutdownTracing(log, traceShutdown)
 	metrics := observability.NewMetrics("live-worker")
 
-	mysql, err := mysqlstore.Open(cfg.MySQL.DSN)
+	mysql, err := mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{
+		MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime,
+	})
 	if err != nil {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = mysql.Close() }()
+	defer func() {
+		if err := mysql.Close(); err != nil {
+			log.Error("close mysql", "error", err)
+		}
+	}()
+	metrics.RegisterDBPool("mysql", mysql.Stats)
 	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer func() { _ = redis.Close() }()
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("close redis", "error", err)
+		}
+	}()
 
 	kafkaProducer, err := mq.NewProducer(cfg.Kafka.Brokers, log, metrics)
 	if err != nil {

@@ -62,6 +62,10 @@ run_case() {
     --report "reports/m7/hotroom-adaptive-ab/${name}-http.json"
   wait "$listener_pid"
   curl -fsS "$BASE_URL/metrics" > "reports/m7/hotroom-adaptive-ab/${name}-metrics.txt"
+  awk '/^live_kafka_produce_total\{/ && /topic="live.danmaku.v1"/ {print}' \
+    "reports/m7/hotroom-adaptive-ab/${name}-metrics.txt" > "reports/m7/hotroom-adaptive-ab/${name}-kafka-summary.txt" || true
+  awk '/^live_kafka_produce_errors_total\{/ && /topic="live.danmaku.v1"/ {print}' \
+    "reports/m7/hotroom-adaptive-ab/${name}-metrics.txt" >> "reports/m7/hotroom-adaptive-ab/${name}-kafka-summary.txt" || true
 }
 
 # Baseline emulates the pre-optimization policy: no fan-out threshold and no

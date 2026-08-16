@@ -73,7 +73,6 @@ FROM wallet_transactions WHERE user_id=? ORDER BY id DESC LIMIT ?`, userID, limi
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 	var out []Transaction
 	for rows.Next() {
 		var v Transaction
@@ -82,7 +81,13 @@ FROM wallet_transactions WHERE user_id=? ORDER BY id DESC LIMIT ?`, userID, limi
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 var ErrNotFound = errors.New("wallet not found")

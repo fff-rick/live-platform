@@ -2,12 +2,13 @@
   "uid": "live-kafka-outbox",
   "title": "Live Platform · Kafka / Outbox",
   "tags": [
-    "live-platform",
-    "M6"
+    "M6",
+    "M7",
+    "live-platform"
   ],
   "timezone": "browser",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -239,6 +240,46 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Kafka produce failure reasons",
+      "type": "timeseries",
+      "description": "Low-cardinality failure classification; context_canceled should remain zero after the M7 async-context fix.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(live_kafka_produce_errors_total[1m])) by (topic, reason)",
+          "legendFormat": "{{topic}} {{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
         },
         "overrides": []
       },

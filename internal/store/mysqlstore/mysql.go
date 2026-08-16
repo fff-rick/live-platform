@@ -8,21 +8,28 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+type Config struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+}
+
 type Store struct{ db *sql.DB }
 
-func Open(dsn string) (*Store, error) {
+func Open(dsn string, cfg Config) (*Store, error) {
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	return &Store{db: db}, nil
 }
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *Store) Close() error                   { return s.db.Close() }
+func (s *Store) Stats() sql.DBStats             { return s.db.Stats() }
 func (s *Store) ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error) {
 	return s.db.ExecContext(ctx, q, args...)
 }
