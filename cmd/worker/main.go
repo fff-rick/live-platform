@@ -52,10 +52,18 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer mysql.Close()
+	defer func() {
+		if err := mysql.Close(); err != nil {
+			log.Error("close mysql", "error", err)
+		}
+	}()
 	metrics.RegisterDBPool("mysql", mysql.Stats)
 	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer redis.Close()
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("close redis", "error", err)
+		}
+	}()
 
 	kafkaProducer, err := mq.NewProducer(cfg.Kafka.Brokers, log, metrics)
 	if err != nil {
