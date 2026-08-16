@@ -49,14 +49,17 @@ func main() {
 	defer shutdownTracing(log, traceShutdown)
 	metrics := observability.NewMetrics("live-api")
 
-	mysql, err := mysqlstore.Open(cfg.MySQL.DSN)
+	mysql, err := mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{
+		MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime,
+	})
 	if err != nil {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = mysql.Close() }()
+	defer mysql.Close()
+	metrics.RegisterDBPool("mysql", mysql.Stats)
 	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer func() { _ = redis.Close() }()
+	defer redis.Close()
 
 	appTokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	cfTokens := cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL)

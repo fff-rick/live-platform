@@ -343,6 +343,7 @@ live_outbox_retry_total
 
 ```text
 live_kafka_produce_total{topic,result}
+live_kafka_produce_errors_total{topic,reason}
 live_kafka_produce_duration_seconds{topic}
 live_kafka_consume_total{group,topic,result}
 live_kafka_consumer_lag{group,topic,partition}
@@ -368,6 +369,19 @@ process_*
 - RSS
 - CPU
 - file descriptors
+
+MySQL `database/sql` pool 还暴露：
+
+```text
+live_db_pool_max_open_connections{service,pool}
+live_db_pool_open_connections{service,pool}
+live_db_pool_in_use_connections{service,pool}
+live_db_pool_idle_connections{service,pool}
+live_db_pool_wait_total{service,pool}
+live_db_pool_wait_duration_seconds_total{service,pool}
+```
+
+这些指标用于区分“数据库本身慢”和“请求在 Go `sql.DB` 连接池前排队”。
 
 ---
 
@@ -819,6 +833,9 @@ DANMAKU_PROTECT_SAMPLE_RATE=0.2    # legacy fallback
 GIFT_MAX_COUNT_PER_REQUEST=100
 GIFT_USER_RATE_LIMIT=10
 GIFT_USER_RATE_WINDOW=1s
+MYSQL_MAX_OPEN_CONNS=20
+MYSQL_MAX_IDLE_CONNS=10
+MYSQL_CONN_MAX_LIFETIME=30m
 ```
 
 # M7 Done Definition
@@ -853,4 +870,18 @@ make m7-hotroom-adaptive-ab
 make m7-gift-platform-ladder
 ```
 
-For raw DB-capacity tests, `m7-gift-compare` and `m7-gift-platform-ladder` temporarily raise the per-user Gift limiter and restore the normal API configuration when finished. Do not use those relaxed limits as production defaults.
+The first Optimization A/B reduced the 5K-listener hot-room WS P99 from ~27.7s to ~585ms and removed steady-state reconnects, but its Kafka side-path was unhealthy. The retained evidence and interpretation are in `benchmark/optimization-findings.md`.
+
+M7 finalization adds two mandatory gates:
+
+```bash
+# Validate the async Kafka context fix and actual MySQL persistence.
+make m7-kafka-danmaku-smoke
+
+# Compare sql.DB MaxOpenConns 20/40/80 at 500 and 1000 target Gift TPS.
+make m7-gift-dbpool-ab
+```
+
+`ProduceAsync` deliberately detaches from HTTP request cancellation using `context.WithoutCancel`: request completion must not cancel an already-buffered best-effort Kafka record. The record remains bounded by franz-go's delivery timeout, and trace values are retained. Kafka failures are classified in `live_kafka_produce_errors_total{topic,reason}`.
+
+For raw DB-capacity tests, `m7-gift-compare`, `m7-gift-platform-ladder`, and `m7-gift-dbpool-ab` temporarily raise the per-user Gift limiter and restore the normal API configuration when finished. Do not use those relaxed limits as production defaults.

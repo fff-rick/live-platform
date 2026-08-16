@@ -73,7 +73,7 @@ FROM wallet_transactions WHERE user_id=? ORDER BY id DESC LIMIT ?`, userID, limi
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 	var out []Transaction
 	for rows.Next() {
 		var v Transaction

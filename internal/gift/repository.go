@@ -56,7 +56,7 @@ FROM gifts WHERE status=1 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer rows.Close()
 	var out []Gift
 	for rows.Next() {
 		var v Gift

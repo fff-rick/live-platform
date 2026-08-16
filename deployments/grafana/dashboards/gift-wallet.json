@@ -2,12 +2,13 @@
   "uid": "live-gift-wallet",
   "title": "Live Platform · Gift / Wallet",
   "tags": [
-    "live-platform",
-    "M6"
+    "M6",
+    "M7",
+    "live-platform"
   ],
   "timezone": "browser",
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-30m",
@@ -199,6 +200,101 @@
       "fieldConfig": {
         "defaults": {
           "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "MySQL pool in-use vs max",
+      "type": "timeseries",
+      "description": "live-api sql.DB utilization. Sustained in-use near max plus growing waits indicates pool saturation.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "live_db_pool_in_use_connections{service=\"live-api\",pool=\"mysql\"}",
+          "legendFormat": "in use"
+        },
+        {
+          "refId": "B",
+          "expr": "live_db_pool_max_open_connections{service=\"live-api\",pool=\"mysql\"}",
+          "legendFormat": "max open"
+        },
+        {
+          "refId": "C",
+          "expr": "live_db_pool_open_connections{service=\"live-api\",pool=\"mysql\"}",
+          "legendFormat": "open"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "MySQL pool wait pressure",
+      "type": "timeseries",
+      "description": "Rate of pool waits and seconds of wait time accrued per second by live-api.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(live_db_pool_wait_total{service=\"live-api\",pool=\"mysql\"}[1m])",
+          "legendFormat": "waits/s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(live_db_pool_wait_duration_seconds_total{service=\"live-api\",pool=\"mysql\"}[1m])",
+          "legendFormat": "wait seconds/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
         },
         "overrides": []
       },

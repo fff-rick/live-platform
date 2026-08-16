@@ -17,6 +17,7 @@ import (
 
 type Metrics interface {
 	KafkaProduced(topic, result string, duration time.Duration)
+	KafkaProduceFailed(topic, reason string)
 	KafkaConsumed(group, topic, result string)
 	KafkaLag(group, topic string, partition int32, lag int64)
 	KafkaBuffered(client, direction string, records int64)
@@ -80,6 +81,9 @@ func (p *Producer) ProduceSync(ctx context.Context, topic, key string, value []b
 	}
 	if p.metrics != nil {
 		p.metrics.KafkaProduced(topic, result, time.Since(started))
+		if err != nil {
+			p.metrics.KafkaProduceFailed(topic, kafkaProduceErrorReason(err))
+		}
 		p.metrics.KafkaBuffered(p.name, "produce", int64(p.client.BufferedProduceRecords()))
 	}
 	span.End()
@@ -90,6 +94,12 @@ func (p *Producer) ProduceSync(ctx context.Context, topic, key string, value []b
 }
 
 func (p *Producer) ProduceAsync(ctx context.Context, topic, key string, value []byte) {
+	// The HTTP request context is canceled as soon as the handler returns. franz-go
+	// treats record-context cancellation as permission to fail an already-buffered
+	// record, so request-scoped cancellation must not own this best-effort async
+	// delivery. context.WithoutCancel preserves trace/value propagation while the
+	// producer's RecordDeliveryTimeout still bounds delivery time.
+	ctx = detachedAsyncContext(ctx)
 	ctx, span := otel.Tracer("live-platform/kafka").Start(ctx, "kafka.produce "+topic, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.destination.name", topic)))
 	started := time.Now()
 	value = InjectTrace(value, ctx)
@@ -105,10 +115,37 @@ func (p *Producer) ProduceAsync(ctx context.Context, topic, key string, value []
 		}
 		if p.metrics != nil {
 			p.metrics.KafkaProduced(topic, result, time.Since(started))
+			if err != nil {
+				p.metrics.KafkaProduceFailed(topic, kafkaProduceErrorReason(err))
+			}
 			p.metrics.KafkaBuffered(p.name, "produce", int64(p.client.BufferedProduceRecords()))
 		}
 		span.End()
 	})
+}
+
+func detachedAsyncContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
+func kafkaProduceErrorReason(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, kgo.ErrMaxBuffered):
+		return "max_buffered"
+	case errors.Is(err, kgo.ErrClientClosed):
+		return "client_closed"
+	default:
+		return "broker_or_other"
+	}
 }
 
 type Record struct {
