@@ -1,70 +1,53 @@
 # M7 Finalization Checklist
 
-Run these in order. Do not enter M8 until the first three gates are understood.
+The Kafka correctness and DB-pool A/B gates have been completed. The final blocking experiment is wallet-cardinality isolation.
 
-## Gate 1 — Kafka danmaku async path
+## Completed — Kafka danmaku correctness
+
+Measured smoke result: 100 HTTP danmaku requests -> 100 Kafka produces -> 0 produce failures -> 100 MySQL persisted records. This proves the repaired asynchronous path closes correctly. It is a correctness smoke, **not** a Kafka capacity or HA claim; the local single-broker/RF=1 topology does not demonstrate replica-level durability.
+
+## Completed — Gift DB pool A/B
+
+Current environment decision:
+
+- default `MYSQL_MAX_OPEN_CONNS=40`
+- default `MYSQL_MAX_IDLE_CONNS=20`
+- pool 80 remains benchmark-only when chasing maximum throughput
+
+Pool saturation was measurable through `sql.DB.Stats()`; increasing the pool reduced Go-side waiting but eventually pushed more contention into MySQL. Do not increase MaxOpenConns blindly.
+
+## Final blocking gate — 1,000-wallet platform isolation
 
 ```bash
-make m7-kafka-danmaku-smoke
-```
-
-Pass criteria:
-
-- HTTP danmaku requests succeed;
-- `live_kafka_produce_total{topic="live.danmaku.v1",result="failed"}` remains 0;
-- `live_kafka_produce_errors_total` has no non-zero failure reason;
-- `danmaku_records` persists at least the number of completed requests.
-
-If this fails, inspect `reports/m7/kafka-danmaku/error-reasons.txt` and live-api logs before running a full hot-room benchmark.
-
-## Gate 2 — Gift database pool A/B
-
-```bash
-make m7-gift-dbpool-ab
+make m7-gift-1000-wallet-capacity
 ```
 
 Default matrix:
 
 ```text
-MaxOpenConns: 20, 40, 80
-Target Gift TPS: 500, 1000
-Users: 100 wallets
+Wallets: 1000
+MaxOpenConns: 40
+Target Gift TPS: 500, 1000, 1500
+Concurrency: 512
+Duration: 60s/case
 ```
 
-For each case inspect:
+Inspect the generated:
 
-- achieved TPS and P50/P95/P99;
-- `db-pool-samples.csv` peak `in_use`;
-- final `live_db_pool_wait_total`;
-- final `live_db_pool_wait_duration_seconds_total`;
-- InnoDB row-lock delta.
+```text
+reports/m7/gift-1000-wallet-capacity/summary.md
+```
 
 Decision rule:
 
-- If 20 connections show peak InUse≈20 and high WaitCount/WaitDuration, while 40/80 materially improve throughput/tail latency without pushing MySQL into a worse state, the Go DB pool was a limiting layer.
-- If larger pools do not improve throughput, stop increasing pool size and profile transaction SQL/commit/storage instead.
-
-## Gate 3 — Full-pipeline hot-room A/B
-
-After Gate 1 passes:
-
-```bash
-make m7-hotroom-adaptive-ab
-make m7-optimization-report
-```
-
-Accept the A/B only if the Kafka produce side-path is healthy in both cases. Keep the baseline/adaptive HTTP, WS and metrics files together.
-
-## Remaining non-blocking benchmark work
-
-- Like ladder: 20K → 50K → 100K logical likes/s.
-- Separate load-generator host, then repeat the connection campaign before claiming per-node 10K/50K/100K capacity.
+- materially lower row-lock pressure + materially higher TPS => prior ~500 TPS plateau was a 100-wallet hotspot artifact;
+- similar TPS with low row-lock pressure => platform bottleneck is elsewhere in the transaction/DB path.
 
 ## M7 freeze condition
 
-M7 can be frozen when:
+After this one experiment:
 
-1. Kafka full-path smoke passes;
-2. DB pool A/B identifies or rules out pool saturation;
-3. final hot-room A/B is captured with Kafka healthy;
-4. `benchmark/capacity.md` is updated only with measured results.
+1. write the measured result into `benchmark/capacity.md`;
+2. do not invent unmeasured 1K/1.5K TPS claims;
+3. stop M7 optimization even if the result is lower than desired;
+4. enter M8 with the bottleneck documented as a known capacity boundary.

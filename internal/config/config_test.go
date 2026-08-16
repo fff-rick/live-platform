@@ -10,7 +10,7 @@ func TestMySQLPoolDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.MySQL.MaxOpenConns != 20 || cfg.MySQL.MaxIdleConns != 10 {
+	if cfg.MySQL.MaxOpenConns != 40 || cfg.MySQL.MaxIdleConns != 20 {
 		t.Fatalf("unexpected pool defaults: open=%d idle=%d", cfg.MySQL.MaxOpenConns, cfg.MySQL.MaxIdleConns)
 	}
 	if got := cfg.MySQL.ConnMaxLifetime.String(); got != "30m0s" {
