@@ -56,6 +56,7 @@ FROM gifts WHERE status=1 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var out []Gift
 	for rows.Next() {
 		var v Gift
@@ -64,13 +65,7 @@ FROM gifts WHERE status=1 ORDER BY id`)
 		}
 		out = append(out, v)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (r *Repository) ByOrderNo(ctx context.Context, orderNo string) (Order, error) {

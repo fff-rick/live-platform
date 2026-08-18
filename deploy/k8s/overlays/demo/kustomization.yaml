@@ -3,6 +3,10 @@ kind: Kustomization
 
 namespace: live-platform
 resources:
+  # The application base is deliberately disabled. The current Argo CD
+  # Application manages only the SealedSecret while old demo workloads are
+  # being retired. Do not uncomment this as a release shortcut: base still
+  # contains the legacy single-node MySQL/Redis/Kafka topology.
   # - ../../base
   - sealed-runtime.yaml
 

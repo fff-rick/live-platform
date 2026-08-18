@@ -21,6 +21,7 @@ var (
 type RoomRepository interface {
 	Create(context.Context, int64, string) (Room, error)
 	ByID(context.Context, int64) (Room, error)
+	List(context.Context, Status, int) ([]Room, error)
 	ChangeStatus(context.Context, int64, int64, Status, Status) error
 	Join(context.Context, int64, int64) error
 	IsMuted(context.Context, int64, int64) (bool, error)
@@ -44,6 +45,13 @@ func (s *Service) Create(ctx context.Context, anchorID int64, title string) (Roo
 }
 
 func (s *Service) Get(ctx context.Context, id int64) (Room, error) { return s.repo.ByID(ctx, id) }
+
+func (s *Service) List(ctx context.Context, status Status, limit int) ([]Room, error) {
+	if status != "" && status != StatusPreparing && status != StatusLiving && status != StatusClosed {
+		return nil, fmt.Errorf("%w: unsupported room status", ErrInvalidInput)
+	}
+	return s.repo.List(ctx, status, limit)
+}
 
 func (s *Service) Start(ctx context.Context, id, actorID int64) (Room, error) {
 	v, err := s.repo.ByID(ctx, id)

@@ -1,8 +1,8 @@
-# M7 Round 2 Checklist
+# M7 第二轮检查清单
 
 Round 2 目的：验证第一轮发现的两个问题——Hot Channel fan-out 与 Gift 尾延迟——并确认压测器不再成为主要瓶颈。
 
-## 0. Environment snapshot
+## 0. 环境快照
 
 ```bash
 make m7-snapshot
@@ -127,7 +127,7 @@ CLIENTS_LIST="10000 50000" CONNECT_RATE=5000 CONNECT_CONCURRENCY=512 make m7-con
 
 只有压测机仍有明显余量，才进入 100K。
 
-## Done for Round 2
+## 第二轮已完成项
 
 完成后应能回答：
 

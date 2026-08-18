@@ -1,12 +1,12 @@
-# M7 Finalization Checklist
+# M7 收尾检查清单
 
-The Kafka correctness and DB-pool A/B gates have been completed. The final blocking experiment is wallet-cardinality isolation.
+All M7 finalization gates are complete. Kafka correctness, DB-pool A/B, and wallet-cardinality isolation have been measured and frozen.
 
-## Completed — Kafka danmaku correctness
+## 已完成：Kafka 弹幕正确性
 
 Measured smoke result: 100 HTTP danmaku requests -> 100 Kafka produces -> 0 produce failures -> 100 MySQL persisted records. This proves the repaired asynchronous path closes correctly. It is a correctness smoke, **not** a Kafka capacity or HA claim; the local single-broker/RF=1 topology does not demonstrate replica-level durability.
 
-## Completed — Gift DB pool A/B
+## 已完成：礼物数据库连接池 A/B
 
 Current environment decision:
 
@@ -16,7 +16,7 @@ Current environment decision:
 
 Pool saturation was measurable through `sql.DB.Stats()`; increasing the pool reduced Go-side waiting but eventually pushed more contention into MySQL. Do not increase MaxOpenConns blindly.
 
-## Final blocking gate — 1,000-wallet platform isolation
+## 已完成：1,000 钱包平台隔离
 
 ```bash
 make m7-gift-1000-wallet-capacity
@@ -38,16 +38,15 @@ Inspect the generated:
 reports/m7/gift-1000-wallet-capacity/summary.md
 ```
 
-Decision rule:
+Measured result:
 
-- materially lower row-lock pressure + materially higher TPS => prior ~500 TPS plateau was a 100-wallet hotspot artifact;
-- similar TPS with low row-lock pressure => platform bottleneck is elsewhere in the transaction/DB path.
+- 500 target -> 479.4 actual TPS, P99 1.884 s, row-lock delta 7;
+- 1000 target -> 689.7 actual TPS, P99 1.903 s, row-lock delta 23;
+- 1500 target -> 717.8 actual TPS, P99 1.845 s, row-lock delta 24;
+- Peak InUse reached 40 in every case.
 
-## M7 freeze condition
+Higher wallet cardinality removed the earlier row-lock hotspot and raised saturation throughput to roughly 700–720 TPS, after which DB pool / transaction processing became the dominant pressure.
 
-After this one experiment:
+## M7 freeze status
 
-1. write the measured result into `benchmark/capacity.md`;
-2. do not invent unmeasured 1K/1.5K TPS claims;
-3. stop M7 optimization even if the result is lower than desired;
-4. enter M8 with the bottleneck documented as a known capacity boundary.
+**COMPLETE.** `benchmark/capacity.md` is the source of truth for measured capacity entering M8.

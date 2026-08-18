@@ -120,4 +120,4 @@ jobs:
           docker run --rm -e ARGOCD_AUTH_TOKEN --entrypoint argocd \
             quay.io/argoproj/argocd:v3.4.5 \
             app sync live-platform-demo --server "$ARGOCD_SERVER" --insecure \
-            --prune --timeout 300
+            --timeout 300

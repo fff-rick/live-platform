@@ -41,3 +41,46 @@ func TestMySQLIdleCannotExceedOpen(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestWorkerRoleDefaults(t *testing.T) {
+	t.Setenv("WORKER_ROLES", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"stats", "outbox", "gift-consumer", "danmaku-consumer"}
+	if len(cfg.Worker.Roles) != len(want) {
+		t.Fatalf("unexpected worker role count: %v", cfg.Worker.Roles)
+	}
+	for i := range want {
+		if cfg.Worker.Roles[i] != want[i] {
+			t.Fatalf("unexpected worker roles: %v", cfg.Worker.Roles)
+		}
+	}
+}
+
+func TestWorkerRoleValidation(t *testing.T) {
+	t.Setenv("WORKER_ROLES", "stats,unknown")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected unsupported worker role error")
+	}
+}
+
+func TestKafkaSASLRequiresCredentials(t *testing.T) {
+	t.Setenv("KAFKA_SASL_MECHANISM", "scram-sha-256")
+	t.Setenv("KAFKA_SASL_USERNAME", "")
+	t.Setenv("KAFKA_SASL_PASSWORD", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected SASL credential validation error")
+	}
+}
+
+func TestStatsOnlyWorkerDoesNotRequireKafkaCredentials(t *testing.T) {
+	t.Setenv("WORKER_ROLES", "stats")
+	t.Setenv("KAFKA_SASL_MECHANISM", "scram-sha-512")
+	t.Setenv("KAFKA_SASL_USERNAME", "")
+	t.Setenv("KAFKA_SASL_PASSWORD", "")
+	if _, err := Load(); err != nil {
+		t.Fatalf("stats-only worker should not require Kafka credentials: %v", err)
+	}
+}

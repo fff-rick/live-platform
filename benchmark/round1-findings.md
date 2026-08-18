@@ -1,4 +1,4 @@
-# M7 Round 1 Findings
+# M7 第一轮发现
 
 > 数据来源：`benchmark/raw/round1/*.json`。这是第一轮真实压测记录。机器规格与 Docker 资源限制尚未随报告提供，因此当前结论只描述**该测试环境下的观测结果**，不能外推为生产容量。
 
@@ -101,7 +101,7 @@ Round 2 增加：
 
 只有当 single-wallet 的 `wallet_update` span / InnoDB lock wait 显著高于 multi-wallet，才能确认 MySQL wallet row lock 是主要原因。
 
-## 6. Round 2 execution order
+## 6. 第二轮执行顺序
 
 ```text
 1. make m7-gift-compare

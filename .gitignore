@@ -6,5 +6,9 @@ dist/
 .idea/
 .vscode/
 .DS_Store
-reports
+reports/
+
+# local deployment credentials / renders
+kubeconfig*
+deployments/k8s/rendered/
 benchmark/raw

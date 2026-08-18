@@ -10,8 +10,25 @@ import (
 
 type Store struct{ client *redis.Client }
 
-func Open(addr, password string, db int) *Store {
-	return &Store{client: redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: db})}
+type Config struct {
+	URL      string
+	Addr     string
+	Password string
+	DB       int
+}
+
+func Open(cfg Config) (*Store, error) {
+	var opts *redis.Options
+	var err error
+	if cfg.URL != "" {
+		opts, err = redis.ParseURL(cfg.URL)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		opts = &redis.Options{Addr: cfg.Addr, Password: cfg.Password, DB: cfg.DB}
+	}
+	return &Store{client: redis.NewClient(opts)}, nil
 }
 func (s *Store) Ping(ctx context.Context) error { return s.client.Ping(ctx).Err() }
 func (s *Store) Close() error                   { return s.client.Close() }
@@ -40,9 +57,11 @@ func (l *FixedWindowLimiter) Allow(ctx context.Context, key string, limit int, w
 
 const activeStatsRoomsKey = "live:stats:rooms"
 
-func roomLikeTotalKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":like:total" }
-func roomLikeDeltaKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":like:delta" }
-func roomViewersKey(roomID int64) string   { return "live:room:" + formatInt(roomID) + ":viewers" }
+func roomLikeTotalKey(roomID int64) string  { return "live:room:" + formatInt(roomID) + ":like:total" }
+func roomLikeDeltaKey(roomID int64) string  { return "live:room:" + formatInt(roomID) + ":like:delta" }
+func roomViewersKey(roomID int64) string    { return "live:room:" + formatInt(roomID) + ":viewers" }
+func roomViewerJoinKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":viewer-join" }
+func roomViewerGiftKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":viewer-gift" }
 func roomLastViewerKey(roomID int64) string {
 	return "live:room:" + formatInt(roomID) + ":stats:last_viewer"
 }
@@ -94,8 +113,11 @@ func (s *Store) AddLikes(ctx context.Context, roomID, count int64) (int64, error
 
 var touchViewerScript = redis.NewScript(`
 redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
+redis.call('ZADD', KEYS[2], 'NX', ARGV[1], ARGV[2])
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+for _, user in ipairs(expired) do redis.call('ZREM', KEYS[2], user) end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-redis.call('ZADD', KEYS[2], ARGV[1], ARGV[4])
+redis.call('ZADD', KEYS[3], ARGV[1], ARGV[4])
 return redis.call('ZCARD', KEYS[1])
 `)
 
@@ -103,9 +125,58 @@ func (s *Store) TouchViewer(ctx context.Context, roomID, userID int64, ttl time.
 	now := time.Now().UnixMilli()
 	expires := now + ttl.Milliseconds()
 	return touchViewerScript.Run(ctx, s.client,
-		[]string{roomViewersKey(roomID), activeStatsRoomsKey},
+		[]string{roomViewersKey(roomID), roomViewerJoinKey(roomID), activeStatsRoomsKey},
 		now, userID, expires, roomID,
 	).Int64()
+}
+
+func (s *Store) RemoveViewer(ctx context.Context, roomID, userID int64) (int64, error) {
+	pipe := s.client.TxPipeline()
+	pipe.ZRem(ctx, roomViewersKey(roomID), formatInt(userID))
+	pipe.ZRem(ctx, roomViewerJoinKey(roomID), formatInt(userID))
+	count := pipe.ZCard(ctx, roomViewersKey(roomID))
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return count.Val(), nil
+}
+
+func (s *Store) AddViewerGiftValue(ctx context.Context, roomID, userID, value int64) error {
+	return s.client.ZIncrBy(ctx, roomViewerGiftKey(roomID), float64(value), formatInt(userID)).Err()
+}
+
+var topViewersScript = redis.NewScript(`
+local active = redis.call('ZRANGEBYSCORE', KEYS[1], ARGV[1], '+inf')
+local rows = {}
+for _, user in ipairs(active) do
+ table.insert(rows, {user, tonumber(redis.call('ZSCORE', KEYS[2], user) or '0'), tonumber(redis.call('ZSCORE', KEYS[3], user) or '0')})
+end
+table.sort(rows, function(a,b) if a[2] == b[2] then return a[3] < b[3] end return a[2] > b[2] end)
+local out = {}; for i=1,math.min(#rows,tonumber(ARGV[2])) do table.insert(out, rows[i][1]); table.insert(out, tostring(rows[i][2])) end
+return out
+`)
+
+func (s *Store) TopViewers(ctx context.Context, roomID, limit int64) ([]int64, error) {
+	vals, err := topViewersScript.Run(ctx, s.client, []string{roomViewersKey(roomID), roomViewerGiftKey(roomID), roomViewerJoinKey(roomID)}, time.Now().UnixMilli(), limit).StringSlice()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(vals)/2)
+	for i := 0; i+1 < len(vals); i += 2 {
+		id, e := parseInt(vals[i])
+		if e != nil {
+			return nil, e
+		}
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func (s *Store) OnlineViewers(ctx context.Context, roomID, limit int64) ([]int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	return s.TopViewers(ctx, roomID, limit)
 }
 
 func (s *Store) TakeLikeDelta(ctx context.Context, roomID int64) (int64, error) {

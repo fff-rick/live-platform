@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#fb7299" />
+  <meta name="description" content="LiveFlow - 基于 Go、Centrifugo、Kafka、Redis、MySQL 的高并发直播互动系统" />
+  <title>LiveFlow · 高并发直播互动</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app"><div class="boot"><div class="brand-mark">L</div><div>LiveFlow 加载中…</div></div></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script src="https://unpkg.com/centrifuge@5.7.0/dist/centrifuge.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/centrifuge@5.7.0/dist/centrifuge.js'"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
