@@ -1,4 +1,4 @@
-# M7 Optimization Round Findings
+# M7 优化轮次发现
 
 This document records measured results from the first Optimization Round. Raw evidence is preserved under `benchmark/raw/optimization-round/`.
 
@@ -53,7 +53,7 @@ Row locking contributes under load, but the average lock wait is far below the o
 
 ## Final M7 decision gate
 
-Kafka correctness and DB-pool A/B are understood. The only remaining blocking capacity experiment is `make m7-gift-1000-wallet-capacity`. See `benchmark/m7-finalization-checklist.md`.
+Kafka correctness, DB-pool A/B, and the 1,000-wallet cardinality isolation are complete. M7 is frozen; `benchmark/capacity.md` is now the source of truth for capacity claims carried into M8.
 
 ## Finalization update — Kafka correctness and DB-pool A/B
 

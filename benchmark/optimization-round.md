@@ -1,37 +1,37 @@
-# M7 Optimization Round
+# M7 优化轮次
 
-## Implemented changes
+## 已实现改动
 
-### Gift protection
+### 礼物保护
 
-- Per-user Redis fixed-window limiter (`GIFT_USER_RATE_LIMIT`, `GIFT_USER_RATE_WINDOW`).
-- Idempotent replay lookup occurs before rate limiting, so a retry of a committed request still returns the original order.
-- `GIFT_MAX_COUNT_PER_REQUEST` bounds combo size (default 100).
-- Browser demo includes a 300 ms gift-combo accumulator; up to 100 clicks are sent as one transaction.
-- `live_gift_rate_limited_total` exposes rejected requests.
+- 按用户的 Redis 固定窗口限流器（`GIFT_USER_RATE_LIMIT`、`GIFT_USER_RATE_WINDOW`）。
+- 幂等重放查询在限流前执行，因此已提交请求的重试仍会返回原订单。
+- `GIFT_MAX_COUNT_PER_REQUEST` 限制连击数量（默认 100）。
+- 浏览器演示包含 300 ms 礼物连击聚合器，最多 100 次点击合并为一笔事务。
+- `live_gift_rate_limited_total` 暴露被拒绝请求。
 
-### Adaptive danmaku fan-out
+### 自适应弹幕扇出
 
-Policy estimates:
+策略估算：
 
 `estimated_fanout_per_sec = viewer_count × observed_danmaku_rate_per_sec`
 
-Default benchmark-derived settings:
+压测推导的默认设置：
 
-- target fan-out: 25,000 deliveries/s
-- HOT: 30,000 deliveries/s
-- PROTECT: 40,000 deliveries/s
-- minimum sample rate: 5%
+- 目标扇出：25,000 次投递/s
+- HOT：30,000 次投递/s
+- PROTECT：40,000 次投递/s
+- 最低采样率：5%
 
-When HOT/PROTECT is active, effective sample rate is approximately:
+HOT/PROTECT 生效时，有效采样率约为：
 
 `target_fanout / estimated_fanout`
 
 clamped to `[DANMAKU_MIN_SAMPLE_RATE, 1]`.
 
-Legacy fixed percentages remain available when `DANMAKU_ADAPTIVE_ENABLED=false`, which is useful for A/B testing and rollback.
+`DANMAKU_ADAPTIVE_ENABLED=false` 时仍可使用旧版固定比例，便于 A/B 测试和回滚。
 
-## Verification commands
+## 验证命令
 
 ```bash
 make m7-gift-optimization-smoke
@@ -39,4 +39,4 @@ make m7-hotroom-adaptive-ab
 make m7-gift-platform-ladder
 ```
 
-The A/B benchmark should be run on the same hardware before and after optimization. Capacity thresholds remain configurable because they depend on host/network/Centrifugo/Redis topology.
+A/B 压测应在优化前后使用相同硬件执行。容量阈值保持可配置，因为它们取决于主机、网络、Centrifugo 与 Redis 拓扑。

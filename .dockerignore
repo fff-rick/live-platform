@@ -1,0 +1,6 @@
+.git
+.github
+reports
+benchmark/raw
+*.zip
+*.sha256

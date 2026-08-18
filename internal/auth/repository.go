@@ -17,8 +17,8 @@ func NewRepository(db DB) *Repository { return &Repository{db: db} }
 
 func (r *Repository) Create(ctx context.Context, username, nickname, passwordHash string) (User, error) {
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO users(username, nickname, password_hash, status, created_at, updated_at)
-VALUES (?, ?, ?, 1, NOW(3), NOW(3))`, username, nickname, passwordHash)
+INSERT INTO users(username, nickname, avatar, password_hash, status, created_at, updated_at)
+VALUES (?, ?, ELT(FLOOR(1 + RAND() * 5), '/svg/布偶.svg', '/svg/暹罗猫.svg', '/svg/波斯猫.svg', '/svg/狸花猫.svg', '/svg/缅因猫.svg'), ?, 1, NOW(3), NOW(3))`, username, nickname, passwordHash)
 	if err != nil {
 		return User{}, err
 	}
@@ -32,9 +32,9 @@ VALUES (?, ?, ?, 1, NOW(3), NOW(3))`, username, nickname, passwordHash)
 func (r *Repository) ByUsername(ctx context.Context, username string) (User, error) {
 	var u User
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, username, nickname, password_hash, status, created_at
+SELECT id, username, nickname, avatar, password_hash, status, created_at
 FROM users WHERE username = ? LIMIT 1`, username).
-		Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.Status, &u.CreatedAt)
+		Scan(&u.ID, &u.Username, &u.Nickname, &u.Avatar, &u.PasswordHash, &u.Status, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
@@ -44,9 +44,9 @@ FROM users WHERE username = ? LIMIT 1`, username).
 func (r *Repository) ByID(ctx context.Context, id int64) (User, error) {
 	var u User
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, username, nickname, password_hash, status, created_at
+SELECT id, username, nickname, avatar, password_hash, status, created_at
 FROM users WHERE id = ? LIMIT 1`, id).
-		Scan(&u.ID, &u.Username, &u.Nickname, &u.PasswordHash, &u.Status, &u.CreatedAt)
+		Scan(&u.ID, &u.Username, &u.Nickname, &u.Avatar, &u.PasswordHash, &u.Status, &u.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}

@@ -22,6 +22,7 @@ type Config struct {
 	Outbox        OutboxConfig
 	Observability ObservabilityConfig
 	Traffic       TrafficConfig
+	Worker        WorkerConfig
 }
 
 type HTTPConfig struct{ Addr string }
@@ -32,6 +33,7 @@ type MySQLConfig struct {
 	ConnMaxLifetime time.Duration
 }
 type RedisConfig struct {
+	URL            string
 	Addr, Password string
 	DB             int
 }
@@ -64,6 +66,14 @@ type KafkaConfig struct {
 	DanmakuConsumerGroup string
 	GiftConsumerGroup    string
 	ConsumerLease        time.Duration
+	TLSEnabled           bool
+	SASLMechanism        string
+	SASLUsername         string
+	SASLPassword         string
+}
+
+type WorkerConfig struct {
+	Roles []string
 }
 type TrafficConfig struct {
 	HotViewers         int64
@@ -176,9 +186,52 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GIFT_USER_RATE_WINDOW must be a positive duration")
 	}
 
+	workerRoles := splitCSV(env("WORKER_ROLES", "stats,outbox,gift-consumer,danmaku-consumer"))
+	if len(workerRoles) == 0 {
+		return Config{}, fmt.Errorf("WORKER_ROLES must contain at least one role")
+	}
+	allowedWorkerRoles := map[string]struct{}{
+		"stats": {}, "outbox": {}, "gift-consumer": {}, "danmaku-consumer": {},
+	}
+	seenWorkerRoles := make(map[string]struct{}, len(workerRoles))
+	for i, role := range workerRoles {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if _, ok := allowedWorkerRoles[role]; !ok {
+			return Config{}, fmt.Errorf("WORKER_ROLES contains unsupported role %q", role)
+		}
+		if _, duplicate := seenWorkerRoles[role]; duplicate {
+			return Config{}, fmt.Errorf("WORKER_ROLES contains duplicate role %q", role)
+		}
+		workerRoles[i] = role
+		seenWorkerRoles[role] = struct{}{}
+	}
+
 	kafkaBrokers := splitCSV(env("KAFKA_BROKERS", "kafka:9092"))
 	if len(kafkaBrokers) == 0 {
 		return Config{}, fmt.Errorf("KAFKA_BROKERS must contain at least one broker")
+	}
+	kafkaTLSEnabled, err := strconv.ParseBool(env("KAFKA_TLS_ENABLED", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("KAFKA_TLS_ENABLED: %w", err)
+	}
+	kafkaSASLMechanism := strings.ToLower(strings.TrimSpace(os.Getenv("KAFKA_SASL_MECHANISM")))
+	switch kafkaSASLMechanism {
+	case "", "plain", "scram-sha-256", "scram-sha-512":
+	default:
+		return Config{}, fmt.Errorf("KAFKA_SASL_MECHANISM must be one of: plain, scram-sha-256, scram-sha-512")
+	}
+	needsKafkaCredentials := true // live-api uses Kafka for best-effort danmaku persistence.
+	if rawRoles := strings.TrimSpace(os.Getenv("WORKER_ROLES")); rawRoles != "" {
+		needsKafkaCredentials = false
+		for _, role := range workerRoles {
+			if role == "outbox" || role == "gift-consumer" || role == "danmaku-consumer" {
+				needsKafkaCredentials = true
+				break
+			}
+		}
+	}
+	if kafkaSASLMechanism != "" && needsKafkaCredentials && (os.Getenv("KAFKA_SASL_USERNAME") == "" || os.Getenv("KAFKA_SASL_PASSWORD") == "") {
+		return Config{}, fmt.Errorf("KAFKA_SASL_USERNAME and KAFKA_SASL_PASSWORD are required when Kafka is used with KAFKA_SASL_MECHANISM")
 	}
 	consumerLease, err := time.ParseDuration(env("KAFKA_CONSUMER_LEASE", "30s"))
 	if err != nil || consumerLease <= 0 {
@@ -277,7 +330,7 @@ func Load() (Config, error) {
 			MaxIdleConns:    mysqlMaxIdleConns,
 			ConnMaxLifetime: mysqlConnMaxLifetime,
 		},
-		Redis: RedisConfig{Addr: env("REDIS_ADDR", "redis:6379"), Password: os.Getenv("REDIS_PASSWORD"), DB: db},
+		Redis: RedisConfig{URL: os.Getenv("REDIS_URL"), Addr: env("REDIS_ADDR", "redis:6379"), Password: os.Getenv("REDIS_PASSWORD"), DB: db},
 		Centrifugo: CentrifugoConfig{
 			APIURL:               env("CENTRIFUGO_API_URL", "http://centrifugo:8000/api"),
 			APIKey:               env("CENTRIFUGO_API_KEY", "dev-api-key-change-me"),
@@ -297,9 +350,14 @@ func Load() (Config, error) {
 			DanmakuConsumerGroup: env("KAFKA_DANMAKU_CONSUMER_GROUP", "live-danmaku-persist-v1"),
 			GiftConsumerGroup:    env("KAFKA_GIFT_CONSUMER_GROUP", "live-gift-realtime-v1"),
 			ConsumerLease:        consumerLease,
+			TLSEnabled:           kafkaTLSEnabled,
+			SASLMechanism:        kafkaSASLMechanism,
+			SASLUsername:         os.Getenv("KAFKA_SASL_USERNAME"),
+			SASLPassword:         os.Getenv("KAFKA_SASL_PASSWORD"),
 		},
 		Outbox:  OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
 		Traffic: TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow, AdaptiveEnabled: adaptiveEnabled, TargetFanoutRate: targetFanout, HotFanoutRate: hotFanout, ProtectFanoutRate: protectFanout, MinSampleRate: minSampleRate},
+		Worker:  WorkerConfig{Roles: workerRoles},
 		Observability: ObservabilityConfig{
 			WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
 			OTelEnabled:       otelEnabled,

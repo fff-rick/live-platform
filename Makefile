@@ -107,3 +107,20 @@ m7-gift-dbpool-ab:
 # Final M7 platform-capacity isolation: 1000 wallets, fixed DB pool=40.
 m7-gift-1000-wallet-capacity:
 	./scripts/m7_gift_1000_wallet_capacity.sh
+
+.PHONY: migrate smoke-m8 m8-k8s-validate gitops-demo-preflight
+migrate:
+	go run ./cmd/migrate
+
+smoke-m8:
+	./scripts/m8_smoke.sh
+
+m8-k8s-validate:
+	./scripts/m8_k8s_validate.sh
+
+gitops-demo-preflight:
+	./scripts/m8_deploy_k8s.sh
+
+.PHONY: smoke-ui
+smoke-ui:
+	./scripts/ui_smoke.sh

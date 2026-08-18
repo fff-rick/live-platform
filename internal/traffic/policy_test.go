@@ -13,6 +13,10 @@ func (f fakeSampler) DanmakuPressure(context.Context, int64, string, time.Durati
 	return f.viewers, f.rate, nil
 }
 
+type metricSpy struct{ mode, action string }
+
+func (m *metricSpy) DanmakuDegraded(mode, action string) { m.mode, m.action = mode, action }
+
 func cfg() Config {
 	return Config{
 		HotViewers: 100, ProtectViewers: 200,

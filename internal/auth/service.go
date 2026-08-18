@@ -102,7 +102,7 @@ func validUsername(s string) bool {
 		return false
 	}
 	for _, r := range s {
-		if (!unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_') || r > unicode.MaxASCII {
+		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_') || r > unicode.MaxASCII {
 			return false
 		}
 	}

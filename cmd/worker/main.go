@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -33,6 +34,7 @@ func main() {
 		log.Error("load config", "error", err)
 		os.Exit(1)
 	}
+	roles := roleSet(cfg.Worker.Roles)
 
 	traceShutdown, err := observability.InitTracer(context.Background(), observability.TraceConfig{
 		Enabled: cfg.Observability.OTelEnabled, ServiceName: "live-worker", Environment: cfg.Observability.Environment,
@@ -45,67 +47,47 @@ func main() {
 	defer shutdownTracing(log, traceShutdown)
 	metrics := observability.NewMetrics("live-worker")
 
-	mysql, err := mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{
-		MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime,
-	})
-	if err != nil {
-		log.Error("open mysql", "error", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := mysql.Close(); err != nil {
-			log.Error("close mysql", "error", err)
+	needsMySQL := roles["outbox"] || roles["gift-consumer"] || roles["danmaku-consumer"]
+	needsRedis := roles["stats"]
+	needsPublisher := roles["stats"] || roles["gift-consumer"]
+
+	var mysql *mysqlstore.Store
+	if needsMySQL {
+		mysql, err = mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{
+			MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime,
+		})
+		if err != nil {
+			log.Error("open mysql", "error", err)
+			os.Exit(1)
 		}
-	}()
-	metrics.RegisterDBPool("mysql", mysql.Stats)
-	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer func() {
-		if err := redis.Close(); err != nil {
-			log.Error("close redis", "error", err)
+		defer mysql.Close()
+		metrics.RegisterDBPool("mysql", mysql.Stats)
+	}
+
+	var redis *redisstore.Store
+	if needsRedis {
+		redis, err = redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+		if err != nil {
+			log.Error("open redis", "error", err)
+			os.Exit(1)
 		}
-	}()
-
-	kafkaProducer, err := mq.NewProducer(cfg.Kafka.Brokers, log, metrics)
-	if err != nil {
-		log.Error("create kafka producer", "error", err)
-		os.Exit(1)
+		defer redis.Close()
 	}
-	defer kafkaProducer.Close()
-	giftConsumer, err := mq.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.GiftConsumerGroup, []string{cfg.Kafka.GiftTopic}, log, metrics)
-	if err != nil {
-		log.Error("create gift consumer", "error", err)
-		os.Exit(1)
+
+	var publisher *realtime.Centrifugo
+	if needsPublisher {
+		publisher = realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, metrics)
 	}
-	defer giftConsumer.Close()
-	danmakuConsumer, err := mq.NewConsumer(cfg.Kafka.Brokers, cfg.Kafka.DanmakuConsumerGroup, []string{cfg.Kafka.DanmakuTopic}, log, metrics)
-	if err != nil {
-		log.Error("create danmaku consumer", "error", err)
-		os.Exit(1)
+
+	kafkaCfg := mq.ClientConfig{
+		Brokers: cfg.Kafka.Brokers, TLSEnabled: cfg.Kafka.TLSEnabled, SASLMechanism: cfg.Kafka.SASLMechanism,
+		SASLUsername: cfg.Kafka.SASLUsername, SASLPassword: cfg.Kafka.SASLPassword,
 	}
-	defer danmakuConsumer.Close()
-
-	publisher := realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, metrics)
-	statsStore := stats.NewRedisStore(redis)
-	aggregator := stats.NewAggregator(log, statsStore, publisher, cfg.Engagement.StatsInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch, metrics)
-
-	outboxRepo := outbox.NewRepository(mysql)
-	outboxPublisher := outbox.NewPublisher(log, outboxRepo, kafkaProducer, "worker-"+idgen.New(), cfg.Outbox.PollInterval, cfg.Outbox.BatchSize, cfg.Outbox.Lease, cfg.Outbox.ProduceTimeout, metrics)
-
-	dedup := eventdedup.NewStore(mysql)
-	giftHandler := gift.NewConsumerHandler(cfg.Kafka.GiftConsumerGroup, dedup, publisher, cfg.Kafka.ConsumerLease)
-	danmakuHandler := danmaku.NewPersistenceHandler(mysql, log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	metricsServer := newMetricsServer(cfg.Observability.WorkerMetricsAddr, metrics)
-	serverErr := make(chan error, 1)
-	go func() {
-		log.Info("worker metrics server started", "addr", cfg.Observability.WorkerMetricsAddr)
-		serverErr <- metricsServer.ListenAndServe()
-	}()
-
-	componentErr := make(chan error, 4)
+	componentErr := make(chan error, len(cfg.Worker.Roles))
 	var wg sync.WaitGroup
 	run := func(name string, fn func(context.Context) error) {
 		wg.Add(1)
@@ -117,12 +99,59 @@ func main() {
 			}
 		}()
 	}
-	run("stats-aggregator", aggregator.Run)
-	run("outbox-publisher", outboxPublisher.Run)
-	run("gift-consumer", func(ctx context.Context) error { return giftConsumer.Run(ctx, giftHandler) })
-	run("danmaku-consumer", func(ctx context.Context) error { return danmakuConsumer.Run(ctx, danmakuHandler) })
 
-	log.Info("worker started", "milestone", "M7", "kafka_brokers", cfg.Kafka.Brokers, "outbox_interval", cfg.Outbox.PollInterval.String())
+	if roles["stats"] {
+		statsStore := stats.NewRedisStore(redis)
+		aggregator := stats.NewAggregator(log, statsStore, publisher, cfg.Engagement.StatsInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch, metrics)
+		run("stats-aggregator", aggregator.Run)
+	}
+
+	var kafkaProducer *mq.Producer
+	if roles["outbox"] {
+		kafkaProducer, err = mq.NewProducerWithConfig(kafkaCfg, log, metrics)
+		if err != nil {
+			log.Error("create kafka producer", "error", err)
+			os.Exit(1)
+		}
+		defer kafkaProducer.Close()
+		outboxRepo := outbox.NewRepository(mysql)
+		outboxPublisher := outbox.NewPublisher(log, outboxRepo, kafkaProducer, "worker-"+idgen.New(), cfg.Outbox.PollInterval, cfg.Outbox.BatchSize, cfg.Outbox.Lease, cfg.Outbox.ProduceTimeout, metrics)
+		run("outbox-publisher", outboxPublisher.Run)
+	}
+
+	var giftConsumer *mq.Consumer
+	if roles["gift-consumer"] {
+		giftConsumer, err = mq.NewConsumerWithConfig(kafkaCfg, cfg.Kafka.GiftConsumerGroup, []string{cfg.Kafka.GiftTopic}, log, metrics)
+		if err != nil {
+			log.Error("create gift consumer", "error", err)
+			os.Exit(1)
+		}
+		defer giftConsumer.Close()
+		dedup := eventdedup.NewStore(mysql)
+		giftHandler := gift.NewConsumerHandler(cfg.Kafka.GiftConsumerGroup, dedup, publisher, cfg.Kafka.ConsumerLease)
+		run("gift-consumer", func(ctx context.Context) error { return giftConsumer.Run(ctx, giftHandler) })
+	}
+
+	var danmakuConsumer *mq.Consumer
+	if roles["danmaku-consumer"] {
+		danmakuConsumer, err = mq.NewConsumerWithConfig(kafkaCfg, cfg.Kafka.DanmakuConsumerGroup, []string{cfg.Kafka.DanmakuTopic}, log, metrics)
+		if err != nil {
+			log.Error("create danmaku consumer", "error", err)
+			os.Exit(1)
+		}
+		defer danmakuConsumer.Close()
+		danmakuHandler := danmaku.NewPersistenceHandler(mysql, log)
+		run("danmaku-consumer", func(ctx context.Context) error { return danmakuConsumer.Run(ctx, danmakuHandler) })
+	}
+
+	metricsServer := newMetricsServer(cfg.Observability.WorkerMetricsAddr, metrics, cfg.Worker.Roles)
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Info("worker metrics server started", "addr", cfg.Observability.WorkerMetricsAddr)
+		serverErr <- metricsServer.ListenAndServe()
+	}()
+
+	log.Info("worker started", "milestone", "M8", "roles", strings.Join(cfg.Worker.Roles, ","), "kafka_brokers", cfg.Kafka.Brokers)
 	select {
 	case <-ctx.Done():
 		log.Info("worker shutdown signal")
@@ -136,7 +165,7 @@ func main() {
 		}
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	_ = metricsServer.Shutdown(shutdownCtx)
 
@@ -150,13 +179,23 @@ func main() {
 	log.Info("worker stopped")
 }
 
-func newMetricsServer(addr string, metrics *observability.Metrics) *http.Server {
+func roleSet(roles []string) map[string]bool {
+	out := make(map[string]bool, len(roles))
+	for _, role := range roles {
+		out[role] = true
+	}
+	return out
+}
+
+func newMetricsServer(addr string, metrics *observability.Metrics, roles []string) *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", metrics.Handler())
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+	health := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","service":"live-worker","milestone":"M7"}`))
-	})
+		_, _ = w.Write([]byte(`{"status":"ok","service":"live-worker","milestone":"M8","roles":"` + strings.Join(roles, ",") + `"}`))
+	}
+	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("GET /ready", health)
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 30 * time.Second}
 }
 

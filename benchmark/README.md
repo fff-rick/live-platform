@@ -1,8 +1,8 @@
-# M7 Benchmark Reports
+# M7 压测报告
 
 这里仅保存**真实压测结果**。仓库不预填性能数字。
 
-## Round 1
+## 第一轮
 
 原始报告：
 
@@ -25,7 +25,7 @@ Round 1 已经发现：
 
 因此旧数据只保留为 baseline，不直接填写最终 Capacity。
 
-## Round 2 推荐顺序
+## 第二轮推荐顺序
 
 1. `make m7-gift-compare`
 2. `make m7-hotroom-ladder`

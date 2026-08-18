@@ -1,4 +1,4 @@
-# M7 Gift TPS Benchmark
+# M7 礼物 TPS 压测
 
 Correctness is a hard gate: a higher TPS result is invalid if wallet/order/outbox invariants fail.
 
@@ -67,3 +67,15 @@ If higher wallet cardinality reduces lock pressure and raises achieved TPS, the 
 - negative balance = 0
 - successful gift without successful order = 0
 - committed gift without outbox row = 0
+
+## D. Final 1,000-wallet result
+
+The final isolation is complete and M7 is frozen:
+
+| Target TPS | Actual TPS | P95 | P99 | Peak InUse | Row-lock waits Δ |
+|---:|---:|---:|---:|---:|---:|
+| 500 | 479.4 | 1.136 s | 1.884 s | 40 | 7 |
+| 1000 | 689.7 | 1.425 s | 1.903 s | 40 | 23 |
+| 1500 | 717.8 | 1.395 s | 1.845 s | 40 | 24 |
+
+Wallet-row contention nearly disappears compared with the 100-wallet workload, while throughput rises beyond the previous ~500 TPS plateau and then flattens around ~700–720 TPS. This proves the old plateau was partly hotspot-driven. The new dominant pressure is DB-pool / transaction processing, not the wallet row. The saturation point is not a low-latency production capacity claim; the last measured low-latency point remains ~200 TPS with P99 ~67 ms.

@@ -1,4 +1,4 @@
-# M7 Round 2 Findings
+# M7 第二轮发现
 
 Round 2 corrected the load-generator issues found in Round 1 and produced two actionable capacity findings. Raw evidence is retained under `benchmark/raw/round2/`.
 
@@ -33,7 +33,7 @@ During the 100 TPS single-wallet run, InnoDB row-lock waits increased from 506 t
 
 At target 200 TPS, the single wallet remained saturated at ~91 TPS with P99 ~6.60 s, while 100 wallets reached ~199.6 TPS with P99 ~92 ms. This confirms the individual wallet row as a deliberate serialization boundary, not a platform-wide 90 TPS limit.
 
-## Optimization decisions
+## 优化决策
 
 1. Keep wallet mutation strongly consistent; do not introduce an unsafe async balance ledger merely to accelerate one pathological account.
 2. Add per-user gift request limiting and client-side combo aggregation. A combo is one strong-consistency transaction with `count > 1`.

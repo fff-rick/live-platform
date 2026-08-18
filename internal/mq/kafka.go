@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/twmb/franz-go/pkg/sasl/plain"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -35,6 +37,36 @@ func Permanent(err error) error {
 }
 func IsPermanent(err error) bool { var p permanentError; return errors.As(err, &p) }
 
+type ClientConfig struct {
+	Brokers       []string
+	TLSEnabled    bool
+	SASLMechanism string
+	SASLUsername  string
+	SASLPassword  string
+}
+
+func clientOptions(cfg ClientConfig) ([]kgo.Opt, error) {
+	if len(cfg.Brokers) == 0 {
+		return nil, errors.New("kafka brokers are required")
+	}
+	opts := []kgo.Opt{kgo.SeedBrokers(cfg.Brokers...)}
+	if cfg.TLSEnabled {
+		opts = append(opts, kgo.DialTLS())
+	}
+	switch cfg.SASLMechanism {
+	case "":
+	case "plain":
+		opts = append(opts, kgo.SASL(plain.Auth{User: cfg.SASLUsername, Pass: cfg.SASLPassword}.AsMechanism()))
+	case "scram-sha-256":
+		opts = append(opts, kgo.SASL(scram.Auth{User: cfg.SASLUsername, Pass: cfg.SASLPassword}.AsSha256Mechanism()))
+	case "scram-sha-512":
+		opts = append(opts, kgo.SASL(scram.Auth{User: cfg.SASLUsername, Pass: cfg.SASLPassword}.AsSha512Mechanism()))
+	default:
+		return nil, fmt.Errorf("unsupported kafka SASL mechanism %q", cfg.SASLMechanism)
+	}
+	return opts, nil
+}
+
 type Producer struct {
 	client  *kgo.Client
 	log     *slog.Logger
@@ -43,11 +75,15 @@ type Producer struct {
 }
 
 func NewProducer(brokers []string, log *slog.Logger, metrics ...Metrics) (*Producer, error) {
-	if len(brokers) == 0 {
-		return nil, errors.New("kafka brokers are required")
+	return NewProducerWithConfig(ClientConfig{Brokers: brokers}, log, metrics...)
+}
+
+func NewProducerWithConfig(cfg ClientConfig, log *slog.Logger, metrics ...Metrics) (*Producer, error) {
+	opts, err := clientOptions(cfg)
+	if err != nil {
+		return nil, err
 	}
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
+	opts = append(opts,
 		kgo.ClientID("live-producer"),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.ProducerLinger(5*time.Millisecond),
@@ -55,6 +91,7 @@ func NewProducer(brokers []string, log *slog.Logger, metrics ...Metrics) (*Produ
 		kgo.RecordDeliveryTimeout(10*time.Second),
 		kgo.MaxBufferedRecords(10000),
 	)
+	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -165,11 +202,18 @@ type Consumer struct {
 }
 
 func NewConsumer(brokers []string, group string, topics []string, log *slog.Logger, metrics ...Metrics) (*Consumer, error) {
-	if len(brokers) == 0 || group == "" || len(topics) == 0 {
-		return nil, errors.New("kafka brokers, group and topics are required")
+	return NewConsumerWithConfig(ClientConfig{Brokers: brokers}, group, topics, log, metrics...)
+}
+
+func NewConsumerWithConfig(cfg ClientConfig, group string, topics []string, log *slog.Logger, metrics ...Metrics) (*Consumer, error) {
+	if group == "" || len(topics) == 0 {
+		return nil, errors.New("kafka group and topics are required")
 	}
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
+	opts, err := clientOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts,
 		kgo.ClientID("live-consumer-"+group),
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeTopics(topics...),
@@ -179,6 +223,7 @@ func NewConsumer(brokers []string, group string, topics []string, log *slog.Logg
 		kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
+	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, err
 	}

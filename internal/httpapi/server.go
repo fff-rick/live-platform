@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -24,14 +25,19 @@ import (
 	cftoken "github.com/example/live-platform/internal/token"
 	"github.com/example/live-platform/internal/viewer"
 	"github.com/example/live-platform/internal/wallet"
+	"github.com/example/live-platform/webui"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type Pinger interface{ Ping(context.Context) error }
+type HistoryStore interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
 
 type Server struct {
 	log        *slog.Logger
 	mysql      Pinger
+	history    HistoryStore
 	redis      Pinger
 	centrifugo Pinger
 	metrics    *observability.Metrics
@@ -52,6 +58,7 @@ type Server struct {
 type Deps struct {
 	Log        *slog.Logger
 	MySQL      Pinger
+	History    HistoryStore
 	Redis      Pinger
 	Centrifugo Pinger
 	Metrics    *observability.Metrics
@@ -70,7 +77,7 @@ type Deps struct {
 
 func New(d Deps) *Server {
 	s := &Server{
-		log: d.Log, mysql: d.MySQL, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
+		log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
 		cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, danmaku: d.Danmaku,
 		likes: d.Likes, viewers: d.Viewers, stats: d.Stats, gifts: d.Gifts, wallet: d.Wallet, mux: http.NewServeMux(),
 	}
@@ -103,10 +110,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/realtime/token", s.requireAuth(s.realtimeToken))
 
 	s.mux.HandleFunc("POST /api/v1/rooms", s.requireAuth(s.createRoom))
+	s.mux.HandleFunc("GET /api/v1/rooms", s.listRooms)
 	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}", s.getRoom)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/messages", s.roomMessages)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/top-viewers", s.topViewers)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/viewers", s.roomViewers)
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/start", s.requireAuth(s.startRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/stop", s.requireAuth(s.stopRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/join", s.requireAuth(s.joinRoom))
+	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/leave", s.requireAuth(s.leaveRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/danmaku", s.requireAuth(s.sendDanmaku))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/like", s.requireAuth(s.likeRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/heartbeat", s.requireAuth(s.heartbeatRoom))
@@ -121,6 +133,115 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.requireAuth(s.unmuteUser))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/bans", s.requireAuth(s.banUser))
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.requireAuth(s.unbanUser))
+
+	// The user-facing SPA is served by the API process so local Docker Compose and
+	// Kubernetes ingress can use a single origin for HTTP APIs and WebSocket auth.
+	s.mux.Handle("GET /", webui.Handler())
+}
+
+func (s *Server) topViewers(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	ids, err := s.viewers.Top(r.Context(), roomID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "viewer ranking unavailable")
+		return
+	}
+	items := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		u, err := s.auth.User(r.Context(), id)
+		if err == nil {
+			items = append(items, map[string]any{"user_id": u.ID, "nickname": u.Nickname, "avatar": u.Avatar})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) roomViewers(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	ids, err := s.viewers.Online(r.Context(), roomID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "viewer list unavailable")
+		return
+	}
+	items := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
+		if u, err := s.auth.User(r.Context(), id); err == nil {
+			items = append(items, map[string]any{"user_id": u.ID, "nickname": u.Nickname, "avatar": u.Avatar})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+type historyMessage struct {
+	Type      string    `json:"type"`
+	MessageID string    `json:"message_id"`
+	RoomID    int64     `json:"room_id"`
+	UserID    int64     `json:"user_id"`
+	Nickname  string    `json:"nickname"`
+	Content   string    `json:"content"`
+	GiftName  string    `json:"gift_name,omitempty"`
+	Count     int64     `json:"count,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Server) roomMessages(w http.ResponseWriter, r *http.Request) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	if s.history == nil {
+		writeError(w, http.StatusServiceUnavailable, "HISTORY_UNAVAILABLE", "message history unavailable")
+		return
+	}
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 || v > 100 {
+			writeError(w, http.StatusBadRequest, "INVALID_LIMIT", "limit must be between 1 and 100")
+			return
+		}
+		limit = v
+	}
+	rows, err := s.history.QueryContext(r.Context(), `
+SELECT * FROM (
+  SELECT 'danmaku' AS type, d.message_id, d.room_id, d.user_id, d.nickname, d.content, '' AS gift_name, 0 AS gift_count, d.created_at, d.id AS sequence
+  FROM danmaku_records d WHERE d.room_id=?
+  UNION ALL
+  SELECT 'gift' AS type, CONCAT('gift:', o.order_no), o.room_id, o.user_id, u.nickname, '' AS content, g.name, o.gift_count, o.created_at, o.id AS sequence
+  FROM gift_orders o JOIN users u ON u.id=o.user_id JOIN gifts g ON g.id=o.gift_id
+  WHERE o.room_id=? AND o.status=1
+) AS room_messages
+ORDER BY created_at DESC, sequence DESC LIMIT ?`, roomID, roomID, limit)
+	if err != nil {
+		s.log.Error("load room messages", "error", err, "room_id", roomID)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load message history")
+		return
+	}
+	defer rows.Close()
+	items := make([]historyMessage, 0, limit)
+	for rows.Next() {
+		var item historyMessage
+		var sequence int64
+		if err := rows.Scan(&item.Type, &item.MessageID, &item.RoomID, &item.UserID, &item.Nickname, &item.Content, &item.GiftName, &item.Count, &item.CreatedAt, &sequence); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load message history")
+			return
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load message history")
+		return
+	}
+	for left, right := 0, len(items)-1; left < right; left, right = left+1, right-1 {
+		items[left], items[right] = items[right], items[left]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) demo(w http.ResponseWriter, _ *http.Request) {
@@ -134,7 +255,7 @@ func (s *Server) demo(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "milestone": "M7"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "milestone": "M8"})
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
@@ -147,16 +268,22 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.redis.Ping(ctx); err != nil {
 		failed = append(failed, "redis")
 	}
-	if s.centrifugo != nil {
-		if err := s.centrifugo.Ping(ctx); err != nil {
-			failed = append(failed, "centrifugo")
-		}
-	}
 	if len(failed) > 0 {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready", "failed": failed})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ready"})
+
+	// Centrifugo is a route-level realtime dependency, not a reason to remove the
+	// entire API pod from Kubernetes Service endpoints. Gift transactions, auth,
+	// and other HTTP operations can remain available while realtime temporarily
+	// degrades. Surface that state without triggering a readiness cascade.
+	var degraded []string
+	if s.centrifugo != nil {
+		if err := s.centrifugo.Ping(ctx); err != nil {
+			degraded = append(degraded, "centrifugo")
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "degraded": degraded})
 }
 
 type registerRequest struct {
@@ -229,6 +356,50 @@ func (s *Server) realtimeToken(w http.ResponseWriter, _ *http.Request, userID in
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": jwt, "expire_at": exp.Unix()})
+}
+
+type roomListItem struct {
+	room.Room
+	ViewerCount int64 `json:"viewer_count"`
+	LikeCount   int64 `json:"like_count"`
+}
+
+func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
+	status := room.Status(strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status"))))
+	if status == "" {
+		status = room.StatusLiving
+	}
+	limit := 24
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 1 || v > 100 {
+			writeError(w, http.StatusBadRequest, "INVALID_LIMIT", "limit must be between 1 and 100")
+			return
+		}
+		limit = v
+	}
+	items, err := s.rooms.List(r.Context(), status, limit)
+	if err != nil {
+		if errors.Is(err, room.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "INVALID_ROOM_FILTER", err.Error())
+			return
+		}
+		s.log.Error("list rooms failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list rooms")
+		return
+	}
+	out := make([]roomListItem, 0, len(items))
+	for _, v := range items {
+		item := roomListItem{Room: v}
+		if s.stats != nil {
+			if snap, snapErr := s.stats.Get(r.Context(), v.ID); snapErr == nil {
+				item.ViewerCount = snap.ViewerCount
+				item.LikeCount = snap.LikeCount
+			}
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 type createRoomRequest struct {
@@ -336,6 +507,19 @@ func (s *Server) joinRoom(w http.ResponseWriter, r *http.Request, userID int64) 
 		"room": v, "subscriptions": subs, "personal_channel": realtime.Personal(userID),
 		"stats": snapshot, "heartbeat_interval_seconds": maxInt64(5, viewerState.ExpiresIn/3),
 	})
+}
+
+func (s *Server) leaveRoom(w http.ResponseWriter, r *http.Request, userID int64) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	count, err := s.viewers.Leave(r.Context(), roomID, userID)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "viewer tracking unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"viewer_count": count})
 }
 
 type danmakuRequest struct {
@@ -586,6 +770,9 @@ func (s *Server) sendGift(w http.ResponseWriter, r *http.Request, userID int64) 
 			writeError(w, http.StatusInternalServerError, "GIFT_FAILED", "failed to send gift")
 		}
 		return
+	}
+	if result.EventQueued {
+		_ = s.viewers.AddGiftValue(r.Context(), roomID, userID, result.Order.TotalAmount)
 	}
 	if s.metrics != nil {
 		metricResult := "success"

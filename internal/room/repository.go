@@ -9,6 +9,7 @@ import (
 
 type DB interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
@@ -34,9 +35,11 @@ func (r *Repository) ByID(ctx context.Context, id int64) (Room, error) {
 	var v Room
 	var started, ended sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, anchor_id, title, status, started_at, ended_at, created_at
-FROM live_rooms WHERE id = ? LIMIT 1`, id).
-		Scan(&v.ID, &v.AnchorID, &v.Title, &v.Status, &started, &ended, &v.CreatedAt)
+SELECT r.id, r.anchor_id, u.nickname, r.title, r.status, r.started_at, r.ended_at, r.created_at
+FROM live_rooms r
+JOIN users u ON u.id = r.anchor_id
+WHERE r.id = ? LIMIT 1`, id).
+		Scan(&v.ID, &v.AnchorID, &v.AnchorNickname, &v.Title, &v.Status, &started, &ended, &v.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, ErrNotFound
 	}
@@ -52,6 +55,49 @@ FROM live_rooms WHERE id = ? LIMIT 1`, id).
 		v.EndedAt = &t
 	}
 	return v, nil
+}
+
+func (r *Repository) List(ctx context.Context, status Status, limit int) ([]Room, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 24
+	}
+	query := `
+SELECT r.id, r.anchor_id, u.nickname, r.title, r.status, r.started_at, r.ended_at, r.created_at
+FROM live_rooms r
+JOIN users u ON u.id = r.anchor_id`
+	args := make([]any, 0, 2)
+	if status != "" {
+		query += ` WHERE r.status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY COALESCE(r.started_at, r.created_at) DESC, r.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Room, 0, limit)
+	for rows.Next() {
+		var v Room
+		var started, ended sql.NullTime
+		if err := rows.Scan(&v.ID, &v.AnchorID, &v.AnchorNickname, &v.Title, &v.Status, &started, &ended, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		if started.Valid {
+			t := started.Time
+			v.StartedAt = &t
+		}
+		if ended.Valid {
+			t := ended.Time
+			v.EndedAt = &t
+		}
+		items = append(items, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (r *Repository) ChangeStatus(ctx context.Context, id, anchorID int64, from, to Status) error {

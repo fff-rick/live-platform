@@ -1,6 +1,8 @@
 # Kubernetes 演示环境部署说明
 
-此 Overlay 仅用于演示和联调，不是正式容量压测环境。它以单副本部署业务必需的服务，并关闭本地链路追踪栈，以适应小规格单节点 Kubernetes 集群的资源预算。
+此 Overlay 是当前唯一接入 Argo CD 的演示环境入口，不是正式容量压测环境。当前它只管理 `SealedSecret/live-platform-runtime`；`../../base` 已被禁用，因此不会声明或更新业务工作负载。
+
+这点对清理尤其重要：集群中残留的旧版 `live-api`、`live-worker`、MySQL、Redis、Kafka 或 Service 不能仅凭名字删除。先运行 `make gitops-demo-preflight`，再在 Argo CD 中确认 Application resource ownership。确认由 `live-platform-demo` 管理且不再需要数据后，才使用带 prune 的同步；非 Argo CD 管理的资源需按其原控制面和数据保留策略处理。
 
 ## 一次性集群初始化
 
@@ -38,12 +40,12 @@ chmod 600 deploy/k8s/runtime.env
 kubectl apply -f deploy/k8s/argocd/live-platform-app.yaml
 ```
 
-演示环境通过 NodePort 暴露 API 与 Centrifugo：
+历史演示环境曾通过 NodePort 暴露 API 与 Centrifugo：
 
 - API：`30082`
 - Centrifugo：`30083`
 
-请在云防火墙/安全组中仅允许可信来源 IP 访问这两个端口。Redis、MySQL、Kafka 与 Worker Metrics 均保持集群内部可见。
+这些端口和工作负载不属于当前 overlay 的期望状态；仅在核对遗留资源时作为识别信息使用。
 
 ## 交付流程
 
@@ -74,7 +76,7 @@ ghcr.io/fff-rick/live-platform:v1.1
 - `ARGOCD_SERVER`：可从 GitHub Actions Runner 访问的 Argo CD API 地址，例如 `43.136.82.118:30080`。
 - `ARGOCD_AUTH_TOKEN`：最小权限 Argo CD Token，仅允许同步 `default/live-platform-demo`。
 
-工作流只会在镜像推送成功后调用 Argo CD；它不通过 SSH 或 `kubectl` 改动集群，实际滚动更新仍由 Argo CD 执行。
+工作流只会在镜像推送成功后调用不带 `--prune` 的 Argo CD 同步；它不通过 SSH 或 `kubectl` 改动集群。清理旧资源是显式、人工确认后的操作，不由每次发布自动触发。
 
 ## GitHub 分支保护
 

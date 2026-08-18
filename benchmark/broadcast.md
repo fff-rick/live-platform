@@ -1,10 +1,10 @@
-# M7 Broadcast / Hot Room Benchmark
+# M7 广播与热点房间压测
 
-Raw corrected Round 2 reports are in `benchmark/raw/round2/hotroom/`.
+修正后的第二轮原始报告位于 `benchmark/raw/round2/hotroom/`。
 
-## Publish-rate ladder — 1,000 subscribers, one room
+## 发布速率阶梯：1,000 名订阅者、一个房间
 
-| Subscribers | Target publish/s | Actual publish/s | Fan-out deliveries/s | P95 receive | P99 receive | Reconnects |
+| 订阅者 | 目标发布/s | 实际发布/s | 扇出投递/s | 接收 P95 | 接收 P99 | 重连次数 |
 |---:|---:|---:|---:|---:|---:|---:|
 | 1,000 | 10 | 9.98 | 9,991 | 24.4 ms | 33.9 ms | 0 |
 | 1,000 | 20 | 19.98 | 19,983 | 25.7 ms | 36.4 ms | 0 |
@@ -12,27 +12,27 @@ Raw corrected Round 2 reports are in `benchmark/raw/round2/hotroom/`.
 | 1,000 | 40 | 39.97 | 39,974 | 56.7 ms | 124.3 ms | 0 |
 | 1,000 | 50 | 49.68 | 49,683 | 120.2 ms | 222.6 ms | 0 |
 
-With a P99 objective below 100 ms, the corrected baseline shows a clear knee between roughly 30K and 40K deliveries/s in this environment.
+以 P99 小于 100 ms 为目标，修正后的基线表明该环境在约 3 万至 4 万次投递/s 之间出现明显拐点。
 
-## Subscriber ladder — fixed 20 publish/s
+## 订阅者阶梯：固定 20 次发布/s
 
-| Subscribers | Actual publish/s | Fan-out deliveries/s | P95 receive | P99 receive | Reconnects | Client errors |
+| 订阅者 | 实际发布/s | 扇出投递/s | 接收 P95 | 接收 P99 | 重连次数 | 客户端错误 |
 |---:|---:|---:|---:|---:|---:|---:|
 | 1,000 | 19.98 | 19,983 | 25.3 ms | 34.2 ms | 0 | 0 |
 | 2,000 | 19.98 | 39,967 | 102.2 ms | 230.0 ms | 0 | 0 |
 | 5,000 | 13.27 | 57,249 measured | 17.72 s | 23.10 s | 2,462 | 4,954 |
 
-The 5,000-subscriber case is an unstable overload result, not a safe capacity figure. It also reinforces that subscriber count is an independent burst dimension: equal average fan-out does not guarantee equal latency.
+5,000 订阅者案例属于不稳定过载结果，不能作为安全容量。它也说明订阅者数量是独立的突发维度：平均扇出相同，并不保证延迟相同。
 
-## Optimization policy
+## 优化策略
 
-M7 Optimization therefore uses **configurable** defaults derived from this environment:
+因此，M7 优化采用以下从该环境推导出的**可配置**默认值：
 
-- target fan-out: 25K deliveries/s
-- HOT threshold: 30K/s
-- PROTECT threshold: 40K/s
-- minimum sample rate: 5%
+- 目标扇出：25K 次投递/s
+- HOT 阈值：30K/s
+- PROTECT 阈值：40K/s
+- 最低采样率：5%
 
-The adaptive controller estimates `viewer_count × rolling_danmaku_rate` and chooses an effective deterministic sample rate approximately equal to `target / estimated`. Run `make m7-hotroom-adaptive-ab` to measure baseline vs adaptive behavior using the same business Danmaku API path.
+自适应控制器估算 `viewer_count × rolling_danmaku_rate`，并选择约等于 `target / estimated` 的确定性有效采样率。使用 `make m7-hotroom-adaptive-ab` 可通过相同的业务弹幕 API 路径比较基线与自适应行为。
 
-These values are not universal Centrifugo limits. Re-run after machine/network/topology changes.
+这些值不是通用的 Centrifugo 限制；机器、网络或拓扑变化后必须重新压测。

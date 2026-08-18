@@ -56,25 +56,24 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer func() {
-		if err := mysql.Close(); err != nil {
-			log.Error("close mysql", "error", err)
-		}
-	}()
+	defer mysql.Close()
 	metrics.RegisterDBPool("mysql", mysql.Stats)
-	redis := redisstore.Open(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	defer func() {
-		if err := redis.Close(); err != nil {
-			log.Error("close redis", "error", err)
-		}
-	}()
+	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	if err != nil {
+		log.Error("open redis", "error", err)
+		os.Exit(1)
+	}
+	defer redis.Close()
 
 	appTokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	cfTokens := cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL)
 	publisher := realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, metrics)
 	// Kafka is deliberately not part of readiness. The API must keep serving gift
 	// transactions through the outbox, and realtime danmaku can degrade without MQ.
-	kafkaProducer, err := mq.NewProducer(cfg.Kafka.Brokers, log, metrics)
+	kafkaProducer, err := mq.NewProducerWithConfig(mq.ClientConfig{
+		Brokers: cfg.Kafka.Brokers, TLSEnabled: cfg.Kafka.TLSEnabled, SASLMechanism: cfg.Kafka.SASLMechanism,
+		SASLUsername: cfg.Kafka.SASLUsername, SASLPassword: cfg.Kafka.SASLPassword,
+	}, log, metrics)
 	if err != nil {
 		log.Error("create kafka producer", "error", err)
 		os.Exit(1)
@@ -105,7 +104,7 @@ func main() {
 	giftService := gift.NewService(giftRepo, roomService, limiter, gift.Config{MaxCountPerRequest: cfg.Gift.MaxCountPerRequest, UserRateLimit: cfg.Gift.UserRateLimit, UserRateWindow: cfg.Gift.UserRateWindow}, cfg.Kafka.GiftTopic)
 
 	api := httpapi.New(httpapi.Deps{
-		Log: log, MySQL: mysql, Redis: redis, Centrifugo: publisher, Metrics: metrics,
+		Log: log, MySQL: mysql, History: mysql, Redis: redis, Centrifugo: publisher, Metrics: metrics,
 		Auth: authService, AppTokens: appTokens, CFTokens: cfTokens, CFSubTTL: cfg.Centrifugo.SubscriptionTokenTTL,
 		Rooms: roomService, Danmaku: danmakuService, Likes: likeService, Viewers: viewerService, Stats: statsService,
 		Gifts: giftService, Wallet: walletService,
@@ -114,7 +113,7 @@ func main() {
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("api started", "addr", cfg.HTTP.Addr, "milestone", "M7")
+		log.Info("api started", "addr", cfg.HTTP.Addr, "milestone", "M8")
 		errCh <- srv.ListenAndServe()
 	}()
 
