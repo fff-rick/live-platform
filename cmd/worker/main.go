@@ -60,7 +60,11 @@ func main() {
 			log.Error("open mysql", "error", err)
 			os.Exit(1)
 		}
-		defer mysql.Close()
+		defer func() {
+			if closeErr := mysql.Close(); closeErr != nil {
+				log.Error("close mysql", "error", closeErr)
+			}
+		}()
 		metrics.RegisterDBPool("mysql", mysql.Stats)
 	}
 
@@ -71,7 +75,11 @@ func main() {
 			log.Error("open redis", "error", err)
 			os.Exit(1)
 		}
-		defer redis.Close()
+		defer func() {
+			if closeErr := redis.Close(); closeErr != nil {
+				log.Error("close redis", "error", closeErr)
+			}
+		}()
 	}
 
 	var publisher *realtime.Centrifugo

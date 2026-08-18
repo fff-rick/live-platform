@@ -223,7 +223,7 @@ ORDER BY created_at DESC, sequence DESC LIMIT ?`, roomID, roomID, limit)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load message history")
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]historyMessage, 0, limit)
 	for rows.Next() {
 		var item historyMessage

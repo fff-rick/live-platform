@@ -76,7 +76,7 @@ JOIN users u ON u.id = r.anchor_id`
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Room, 0, limit)
 	for rows.Next() {
 		var v Room

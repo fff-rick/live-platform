@@ -56,14 +56,22 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer mysql.Close()
+	defer func() {
+		if closeErr := mysql.Close(); closeErr != nil {
+			log.Error("close mysql", "error", closeErr)
+		}
+	}()
 	metrics.RegisterDBPool("mysql", mysql.Stats)
 	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
 	if err != nil {
 		log.Error("open redis", "error", err)
 		os.Exit(1)
 	}
-	defer redis.Close()
+	defer func() {
+		if closeErr := redis.Close(); closeErr != nil {
+			log.Error("close redis", "error", closeErr)
+		}
+	}()
 
 	appTokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	cfTokens := cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL)

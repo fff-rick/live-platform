@@ -46,12 +46,12 @@ func run(ctx context.Context, dsn, dir string, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("reserve mysql migration connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.PingContext(ctx); err != nil {
 		return fmt.Errorf("ping mysql: %w", err)
 	}
