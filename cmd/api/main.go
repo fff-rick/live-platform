@@ -73,8 +73,11 @@ func main() {
 		}
 	}()
 
+	// 项目 HTTP API 的登录态 JWT
 	appTokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
+	// 供 Centrifugo 校验的连接、订阅 JWT
 	cfTokens := cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL)
+	// 请求 Centrifugo /api/publish 的 HTTP 客户端
 	publisher := realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, metrics)
 	// Kafka is deliberately not part of readiness. The API must keep serving gift
 	// transactions through the outbox, and realtime danmaku can degrade without MQ.
