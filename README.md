@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="logo/live-platform.png" alt="Live Platform Logo" width="180">
+</p>
+
+<h1 align="center">live-platform</h1>
 # Live Platform
 
 基于 Go、Centrifugo、Redis、MySQL 和 Kafka 构建的直播互动平台。项目实现互动平面：用户认证、开播/进房、实时弹幕、点赞、礼物钱包、房主管理、在线观众与礼物榜；视频采集、转码和 CDN 是后续可替换的媒体平面。
