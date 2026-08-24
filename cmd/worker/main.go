@@ -17,6 +17,7 @@ import (
 	"github.com/example/live-platform/internal/eventdedup"
 	"github.com/example/live-platform/internal/gift"
 	"github.com/example/live-platform/internal/idgen"
+	"github.com/example/live-platform/internal/like"
 	"github.com/example/live-platform/internal/mq"
 	"github.com/example/live-platform/internal/observability"
 	"github.com/example/live-platform/internal/outbox"
@@ -47,8 +48,8 @@ func main() {
 	defer shutdownTracing(log, traceShutdown)
 	metrics := observability.NewMetrics("live-worker")
 
-	needsMySQL := roles["outbox"] || roles["gift-consumer"] || roles["danmaku-consumer"]
-	needsRedis := roles["stats"]
+	needsMySQL := roles["outbox"] || roles["gift-consumer"] || roles["danmaku-consumer"] || roles["like-snapshot"]
+	needsRedis := roles["stats"] || roles["like-snapshot"]
 	needsPublisher := roles["stats"] || roles["gift-consumer"]
 
 	var mysql *mysqlstore.Store
@@ -70,7 +71,7 @@ func main() {
 
 	var redis *redisstore.Store
 	if needsRedis {
-		redis, err = redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+		redis, err = redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ActiveRoomShards: cfg.Engagement.ActiveRoomShards})
 		if err != nil {
 			log.Error("open redis", "error", err)
 			os.Exit(1)
@@ -112,6 +113,10 @@ func main() {
 		statsStore := stats.NewRedisStore(redis)
 		aggregator := stats.NewAggregator(log, statsStore, publisher, cfg.Engagement.StatsInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch, metrics)
 		run("stats-aggregator", aggregator.Run)
+	}
+	if roles["like-snapshot"] {
+		snapshotter := like.NewSnapshotter(log, redis, mysql, cfg.Engagement.LikeSnapshotInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch)
+		run("like-snapshot", snapshotter.Run)
 	}
 
 	var kafkaProducer *mq.Producer

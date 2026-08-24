@@ -2,19 +2,24 @@ package redisstore
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-type Store struct{ client *redis.Client }
+type Store struct {
+	client           *redis.Client
+	activeRoomShards int64
+}
 
 type Config struct {
-	URL      string
-	Addr     string
-	Password string
-	DB       int
+	URL              string
+	Addr             string
+	Password         string
+	DB               int
+	ActiveRoomShards int64
 }
 
 func Open(cfg Config) (*Store, error) {
@@ -28,7 +33,10 @@ func Open(cfg Config) (*Store, error) {
 	} else {
 		opts = &redis.Options{Addr: cfg.Addr, Password: cfg.Password, DB: cfg.DB}
 	}
-	return &Store{client: redis.NewClient(opts)}, nil
+	if cfg.ActiveRoomShards <= 0 {
+		cfg.ActiveRoomShards = 16
+	}
+	return &Store{client: redis.NewClient(opts), activeRoomShards: cfg.ActiveRoomShards}, nil
 }
 func (s *Store) Ping(ctx context.Context) error { return s.client.Ping(ctx).Err() }
 func (s *Store) Close() error                   { return s.client.Close() }
@@ -40,34 +48,46 @@ func NewFixedWindowLimiter(store *Store) *FixedWindowLimiter {
 }
 
 var fixedWindowScript = redis.NewScript(`
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local requested = tonumber(ARGV[3])
+if current + requested > tonumber(ARGV[1]) then
+  return 0
+end
+local next = redis.call('INCRBY', KEYS[1], requested)
+if next == requested then
   redis.call('PEXPIRE', KEYS[1], ARGV[2])
 end
-return current <= tonumber(ARGV[1])
+return 1
 `)
 
 func (l *FixedWindowLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
-	res, err := fixedWindowScript.Run(ctx, l.client, []string{key}, limit, window.Milliseconds()).Int()
+	return l.AllowN(ctx, key, int64(limit), 1, window)
+}
+
+// AllowN consumes n units from one fixed window. It is used for batched likes
+// so the quota represents clicks rather than HTTP requests.
+func (l *FixedWindowLimiter) AllowN(ctx context.Context, key string, limit, n int64, window time.Duration) (bool, error) {
+	res, err := fixedWindowScript.Run(ctx, l.client, []string{key}, limit, window.Milliseconds(), n).Int()
 	if err != nil {
 		return false, err
 	}
 	return res == 1, nil
 }
 
-const activeStatsRoomsKey = "live:stats:rooms"
-
-func roomLikeTotalKey(roomID int64) string  { return "live:room:" + formatInt(roomID) + ":like:total" }
-func roomLikeDeltaKey(roomID int64) string  { return "live:room:" + formatInt(roomID) + ":like:delta" }
-func roomViewersKey(roomID int64) string    { return "live:room:" + formatInt(roomID) + ":viewers" }
-func roomViewerJoinKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":viewer-join" }
-func roomViewerGiftKey(roomID int64) string { return "live:room:" + formatInt(roomID) + ":viewer-gift" }
+func roomTag(roomID int64) string           { return "{" + formatInt(roomID) + "}" }
+func roomLikeTotalKey(roomID int64) string  { return "live:room:" + roomTag(roomID) + ":like:total" }
+func roomLikeDeltaKey(roomID int64) string  { return "live:room:" + roomTag(roomID) + ":like:delta" }
+func roomViewersKey(roomID int64) string    { return "live:room:" + roomTag(roomID) + ":viewers" }
+func roomViewerJoinKey(roomID int64) string { return "live:room:" + roomTag(roomID) + ":viewer-join" }
+func roomViewerGiftKey(roomID int64) string { return "live:room:" + roomTag(roomID) + ":viewer-gift" }
 func roomLastViewerKey(roomID int64) string {
-	return "live:room:" + formatInt(roomID) + ":stats:last_viewer"
+	return "live:room:" + roomTag(roomID) + ":stats:last_viewer"
 }
+func activeStatsRoomsKey(shard int64) string        { return fmt.Sprintf("live:stats:rooms:%d", shard) }
+func (s *Store) activeRoomShard(roomID int64) int64 { return roomID % s.activeRoomShards }
 
 func roomDanmakuRateKey(roomID int64) string {
-	return "live:room:" + formatInt(roomID) + ":danmaku:rolling"
+	return "live:room:" + roomTag(roomID) + ":danmaku:rolling"
 }
 
 var danmakuPressureScript = redis.NewScript(`
@@ -99,16 +119,55 @@ func (s *Store) DanmakuPressure(ctx context.Context, roomID int64, messageID str
 var addLikesScript = redis.NewScript(`
 local total = redis.call('INCRBY', KEYS[1], ARGV[1])
 redis.call('INCRBY', KEYS[2], ARGV[1])
-redis.call('ZADD', KEYS[3], ARGV[3], ARGV[2])
 return total
 `)
 
 func (s *Store) AddLikes(ctx context.Context, roomID, count int64) (int64, error) {
 	now := time.Now().UnixMilli()
+	// The index write deliberately precedes the room-local script. This keeps
+	// the Lua call single-slot in Redis Cluster; a stray active entry is harmless.
+	if err := s.client.ZAdd(ctx, activeStatsRoomsKey(s.activeRoomShard(roomID)), redis.Z{Score: float64(now), Member: roomID}).Err(); err != nil {
+		return 0, err
+	}
 	return addLikesScript.Run(ctx, s.client,
-		[]string{roomLikeTotalKey(roomID), roomLikeDeltaKey(roomID), activeStatsRoomsKey},
-		count, roomID, now,
+		[]string{roomLikeTotalKey(roomID), roomLikeDeltaKey(roomID)}, count,
 	).Int64()
+}
+
+func likeRoomStatusKey(roomID int64) string { return "live:room:" + roomTag(roomID) + ":like:status" }
+func likeBanKey(roomID, userID int64) string {
+	return "live:room:" + roomTag(roomID) + ":like:ban:" + formatInt(userID)
+}
+func LikeRateKey(roomID, userID int64) string {
+	return "live:room:" + roomTag(roomID) + ":like:rate:" + formatInt(userID)
+}
+
+func (s *Store) CachedLikeRoomStatus(ctx context.Context, roomID int64) (string, bool, error) {
+	v, err := s.client.Get(ctx, likeRoomStatusKey(roomID)).Result()
+	if err == redis.Nil {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+func (s *Store) CacheLikeRoomStatus(ctx context.Context, roomID int64, status string, ttl time.Duration) error {
+	return s.client.Set(ctx, likeRoomStatusKey(roomID), status, ttl).Err()
+}
+
+func (s *Store) CachedLikeBan(ctx context.Context, roomID, userID int64) (bool, bool, error) {
+	v, err := s.client.Get(ctx, likeBanKey(roomID, userID)).Int()
+	if err == redis.Nil {
+		return false, false, nil
+	}
+	return v == 1, err == nil, err
+}
+
+func (s *Store) CacheLikeBan(ctx context.Context, roomID, userID int64, banned bool, ttl time.Duration) error {
+	v := 0
+	if banned {
+		v = 1
+	}
+	return s.client.Set(ctx, likeBanKey(roomID, userID), v, ttl).Err()
 }
 
 var touchViewerScript = redis.NewScript(`
@@ -117,16 +176,17 @@ redis.call('ZADD', KEYS[2], 'NX', ARGV[1], ARGV[2])
 local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
 for _, user in ipairs(expired) do redis.call('ZREM', KEYS[2], user) end
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-redis.call('ZADD', KEYS[3], ARGV[1], ARGV[4])
 return redis.call('ZCARD', KEYS[1])
 `)
 
 func (s *Store) TouchViewer(ctx context.Context, roomID, userID int64, ttl time.Duration) (int64, error) {
 	now := time.Now().UnixMilli()
 	expires := now + ttl.Milliseconds()
+	if err := s.client.ZAdd(ctx, activeStatsRoomsKey(s.activeRoomShard(roomID)), redis.Z{Score: float64(now), Member: roomID}).Err(); err != nil {
+		return 0, err
+	}
 	return touchViewerScript.Run(ctx, s.client,
-		[]string{roomViewersKey(roomID), roomViewerJoinKey(roomID), activeStatsRoomsKey},
-		now, userID, expires, roomID,
+		[]string{roomViewersKey(roomID), roomViewerJoinKey(roomID)}, now, userID, expires,
 	).Int64()
 }
 
@@ -191,11 +251,10 @@ func (s *Store) RestoreLikeDelta(ctx context.Context, roomID, delta int64) error
 	if delta <= 0 {
 		return nil
 	}
-	pipe := s.client.TxPipeline()
-	pipe.IncrBy(ctx, roomLikeDeltaKey(roomID), delta)
-	pipe.ZAdd(ctx, activeStatsRoomsKey, redis.Z{Score: float64(time.Now().UnixMilli()), Member: roomID})
-	_, err := pipe.Exec(ctx)
-	return err
+	if err := s.client.ZAdd(ctx, activeStatsRoomsKey(s.activeRoomShard(roomID)), redis.Z{Score: float64(time.Now().UnixMilli()), Member: roomID}).Err(); err != nil {
+		return err
+	}
+	return s.client.IncrBy(ctx, roomLikeDeltaKey(roomID), delta).Err()
 }
 
 var snapshotScript = redis.NewScript(`
@@ -225,25 +284,35 @@ func (s *Store) EngagementSnapshot(ctx context.Context, roomID int64) (Engagemen
 	return EngagementSnapshot{ViewerCount: vals[0], LikeCount: vals[1]}, nil
 }
 
+func (s *Store) LikeSnapshot(ctx context.Context, roomID int64) (int64, error) {
+	return s.client.Get(ctx, roomLikeTotalKey(roomID)).Int64()
+}
+
 func (s *Store) ActiveRooms(ctx context.Context, since time.Time, limit int64) ([]int64, error) {
 	if limit <= 0 {
 		limit = 1000
 	}
-	pipe := s.client.TxPipeline()
-	pipe.ZRemRangeByScore(ctx, activeStatsRoomsKey, "-inf", formatInt(since.UnixMilli()))
-	cmd := pipe.ZRevRange(ctx, activeStatsRoomsKey, 0, limit-1)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, err
-	}
-	raw, err := cmd.Result()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]int64, 0, len(raw))
-	for _, v := range raw {
-		id, err := parseInt(v)
-		if err == nil && id > 0 {
-			out = append(out, id)
+	out := make([]int64, 0, limit)
+	perShard := (limit + s.activeRoomShards - 1) / s.activeRoomShards
+	for shard := int64(0); shard < s.activeRoomShards && int64(len(out)) < limit; shard++ {
+		pipe := s.client.TxPipeline()
+		pipe.ZRemRangeByScore(ctx, activeStatsRoomsKey(shard), "-inf", formatInt(since.UnixMilli()))
+		cmd := pipe.ZRevRange(ctx, activeStatsRoomsKey(shard), 0, perShard-1)
+		if _, err := pipe.Exec(ctx); err != nil {
+			return nil, err
+		}
+		raw, err := cmd.Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range raw {
+			id, err := parseInt(v)
+			if err == nil && id > 0 {
+				out = append(out, id)
+				if int64(len(out)) == limit {
+					break
+				}
+			}
 		}
 	}
 	return out, nil

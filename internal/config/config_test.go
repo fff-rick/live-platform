@@ -48,7 +48,7 @@ func TestWorkerRoleDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want := []string{"stats", "outbox", "gift-consumer", "danmaku-consumer"}
+	want := []string{"stats", "like-snapshot", "outbox", "gift-consumer", "danmaku-consumer"}
 	if len(cfg.Worker.Roles) != len(want) {
 		t.Fatalf("unexpected worker role count: %v", cfg.Worker.Roles)
 	}

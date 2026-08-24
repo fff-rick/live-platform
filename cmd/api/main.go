@@ -62,7 +62,7 @@ func main() {
 		}
 	}()
 	metrics.RegisterDBPool("mysql", mysql.Stats)
-	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ActiveRoomShards: cfg.Engagement.ActiveRoomShards})
 	if err != nil {
 		log.Error("open redis", "error", err)
 		os.Exit(1)
@@ -105,7 +105,10 @@ func main() {
 		HotFanoutRate: cfg.Traffic.HotFanoutRate, ProtectFanoutRate: cfg.Traffic.ProtectFanoutRate, MinSampleRate: cfg.Traffic.MinSampleRate,
 	}, metrics)
 	danmakuService := danmaku.NewService(roomService, authService, limiter, filter, publisher, danmaku.NewKafkaProducer(kafkaProducer, cfg.Kafka.DanmakuTopic, log), cfg.Danmaku.UserRateLimit, cfg.Danmaku.UserRateWindow, trafficPolicy)
-	likeService := like.NewService(roomService, redis)
+	likeService := like.NewService(roomService, redis, like.Config{
+		UserRateLimit: cfg.Like.UserRateLimit, UserRateWindow: cfg.Like.UserRateWindow,
+		RoomCacheTTL: cfg.Like.RoomCacheTTL, BanCacheTTL: cfg.Like.BanCacheTTL,
+	})
 	viewerService := viewer.NewService(redis, cfg.Engagement.ViewerTTL)
 	statsStore := stats.NewRedisStore(redis)
 	statsService := stats.NewService(statsStore)

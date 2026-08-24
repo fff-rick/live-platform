@@ -590,6 +590,8 @@ func (s *Server) likeRoom(w http.ResponseWriter, r *http.Request, userID int64) 
 		switch {
 		case errors.Is(err, like.ErrInvalidCount):
 			writeError(w, http.StatusBadRequest, "INVALID_LIKE_COUNT", err.Error())
+		case errors.Is(err, like.ErrRateLimited):
+			writeError(w, http.StatusTooManyRequests, "LIKE_RATE_LIMITED", err.Error())
 		case errors.Is(err, room.ErrNotFound), errors.Is(err, room.ErrNotLiving), errors.Is(err, room.ErrBanned):
 			handleRoomError(w, err)
 		default:
