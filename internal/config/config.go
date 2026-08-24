@@ -15,6 +15,7 @@ type Config struct {
 	Centrifugo    CentrifugoConfig
 	Auth          AuthConfig
 	Danmaku       DanmakuConfig
+	Like          LikeConfig
 	Gift          GiftConfig
 	Engagement    EngagementConfig
 	Wallet        WalletConfig
@@ -57,6 +58,12 @@ type GiftConfig struct {
 	MaxCountPerRequest int64
 	UserRateLimit      int
 	UserRateWindow     time.Duration
+}
+type LikeConfig struct {
+	UserRateLimit  int64
+	UserRateWindow time.Duration
+	RoomCacheTTL   time.Duration
+	BanCacheTTL    time.Duration
 }
 type WalletConfig struct{ DevCreditEnabled bool }
 type KafkaConfig struct {
@@ -107,10 +114,12 @@ type OutboxConfig struct {
 }
 
 type EngagementConfig struct {
-	ViewerTTL        time.Duration
-	StatsInterval    time.Duration
-	ActiveRoomWindow time.Duration
-	ActiveRoomBatch  int64
+	ViewerTTL            time.Duration
+	StatsInterval        time.Duration
+	ActiveRoomWindow     time.Duration
+	ActiveRoomBatch      int64
+	ActiveRoomShards     int64
+	LikeSnapshotInterval time.Duration
 }
 
 func Load() (Config, error) {
@@ -160,6 +169,30 @@ func Load() (Config, error) {
 	if err != nil || activeRoomBatch <= 0 {
 		return Config{}, fmt.Errorf("ACTIVE_ROOM_BATCH must be a positive integer")
 	}
+	activeRoomShards, err := strconv.ParseInt(env("ACTIVE_ROOM_SHARDS", "16"), 10, 64)
+	if err != nil || activeRoomShards <= 0 || activeRoomShards > 1024 {
+		return Config{}, fmt.Errorf("ACTIVE_ROOM_SHARDS must be between 1 and 1024")
+	}
+	likeSnapshotInterval, err := time.ParseDuration(env("LIKE_SNAPSHOT_INTERVAL", "10s"))
+	if err != nil || likeSnapshotInterval <= 0 {
+		return Config{}, fmt.Errorf("LIKE_SNAPSHOT_INTERVAL must be a positive duration")
+	}
+	likeUserRateLimit, err := strconv.ParseInt(env("LIKE_USER_RATE_LIMIT", "300"), 10, 64)
+	if err != nil || likeUserRateLimit <= 0 {
+		return Config{}, fmt.Errorf("LIKE_USER_RATE_LIMIT must be a positive integer")
+	}
+	likeUserRateWindow, err := time.ParseDuration(env("LIKE_USER_RATE_WINDOW", "1s"))
+	if err != nil || likeUserRateWindow <= 0 {
+		return Config{}, fmt.Errorf("LIKE_USER_RATE_WINDOW must be a positive duration")
+	}
+	likeRoomCacheTTL, err := time.ParseDuration(env("LIKE_ROOM_CACHE_TTL", "2s"))
+	if err != nil || likeRoomCacheTTL <= 0 {
+		return Config{}, fmt.Errorf("LIKE_ROOM_CACHE_TTL must be a positive duration")
+	}
+	likeBanCacheTTL, err := time.ParseDuration(env("LIKE_BAN_CACHE_TTL", "1s"))
+	if err != nil || likeBanCacheTTL <= 0 {
+		return Config{}, fmt.Errorf("LIKE_BAN_CACHE_TTL must be a positive duration")
+	}
 	devCreditEnabled, err := strconv.ParseBool(env("ENABLE_DEV_WALLET_CREDIT", "false"))
 	if err != nil {
 		return Config{}, fmt.Errorf("ENABLE_DEV_WALLET_CREDIT: %w", err)
@@ -186,12 +219,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GIFT_USER_RATE_WINDOW must be a positive duration")
 	}
 
-	workerRoles := splitCSV(env("WORKER_ROLES", "stats,outbox,gift-consumer,danmaku-consumer"))
+	workerRoles := splitCSV(env("WORKER_ROLES", "stats,like-snapshot,outbox,gift-consumer,danmaku-consumer"))
 	if len(workerRoles) == 0 {
 		return Config{}, fmt.Errorf("WORKER_ROLES must contain at least one role")
 	}
 	allowedWorkerRoles := map[string]struct{}{
-		"stats": {}, "outbox": {}, "gift-consumer": {}, "danmaku-consumer": {},
+		"stats": {}, "like-snapshot": {}, "outbox": {}, "gift-consumer": {}, "danmaku-consumer": {},
 	}
 	seenWorkerRoles := make(map[string]struct{}, len(workerRoles))
 	for i, role := range workerRoles {
@@ -340,8 +373,9 @@ func Load() (Config, error) {
 		},
 		Auth:       AuthConfig{JWTSecret: env("AUTH_JWT_SECRET", "dev-app-jwt-secret-change-me"), TokenTTL: authTTL},
 		Danmaku:    DanmakuConfig{SensitiveWords: words, UserRateLimit: danmakuUserRateLimit, UserRateWindow: danmakuUserRateWindow},
+		Like:       LikeConfig{UserRateLimit: likeUserRateLimit, UserRateWindow: likeUserRateWindow, RoomCacheTTL: likeRoomCacheTTL, BanCacheTTL: likeBanCacheTTL},
 		Gift:       GiftConfig{MaxCountPerRequest: giftMaxCount, UserRateLimit: giftUserRateLimit, UserRateWindow: giftUserRateWindow},
-		Engagement: EngagementConfig{ViewerTTL: viewerTTL, StatsInterval: statsInterval, ActiveRoomWindow: activeRoomWindow, ActiveRoomBatch: activeRoomBatch},
+		Engagement: EngagementConfig{ViewerTTL: viewerTTL, StatsInterval: statsInterval, ActiveRoomWindow: activeRoomWindow, ActiveRoomBatch: activeRoomBatch, ActiveRoomShards: activeRoomShards, LikeSnapshotInterval: likeSnapshotInterval},
 		Wallet:     WalletConfig{DevCreditEnabled: devCreditEnabled},
 		Kafka: KafkaConfig{
 			Brokers:              kafkaBrokers,
