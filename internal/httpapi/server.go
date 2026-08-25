@@ -9,6 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -35,44 +38,64 @@ type HistoryStore interface {
 }
 
 type Server struct {
-	log        *slog.Logger
-	mysql      Pinger
-	history    HistoryStore
-	redis      Pinger
-	centrifugo Pinger
-	metrics    *observability.Metrics
-	auth       *auth.Service
-	appTokens  *auth.TokenManager
-	cfTokens   *cftoken.Issuer
-	cfSubTTL   time.Duration
-	rooms      *room.Service
-	danmaku    *danmaku.Service
-	likes      *like.Service
-	viewers    *viewer.Service
-	stats      *stats.Service
-	gifts      *gift.Service
-	wallet     *wallet.Service
-	mux        *http.ServeMux
+	log          *slog.Logger
+	mysql        Pinger
+	history      HistoryStore
+	redis        Pinger
+	centrifugo   Pinger
+	metrics      *observability.Metrics
+	auth         *auth.Service
+	appTokens    *auth.TokenManager
+	cfTokens     *cftoken.Issuer
+	cfSubTTL     time.Duration
+	rooms        RoomAPI
+	danmaku      *danmaku.Service
+	likes        *like.Service
+	viewers      *viewer.Service
+	stats        *stats.Service
+	gifts        *gift.Service
+	wallet       *wallet.Service
+	commerce     http.Handler
+	interaction  http.Handler
+	identityRoom http.Handler
+	mux          *http.ServeMux
 }
 
 type Deps struct {
-	Log        *slog.Logger
-	MySQL      Pinger
-	History    HistoryStore
-	Redis      Pinger
-	Centrifugo Pinger
-	Metrics    *observability.Metrics
-	Auth       *auth.Service
-	AppTokens  *auth.TokenManager
-	CFTokens   *cftoken.Issuer
-	CFSubTTL   time.Duration
-	Rooms      *room.Service
-	Danmaku    *danmaku.Service
-	Likes      *like.Service
-	Viewers    *viewer.Service
-	Stats      *stats.Service
-	Gifts      *gift.Service
-	Wallet     *wallet.Service
+	Log             *slog.Logger
+	MySQL           Pinger
+	History         HistoryStore
+	Redis           Pinger
+	Centrifugo      Pinger
+	Metrics         *observability.Metrics
+	Auth            *auth.Service
+	AppTokens       *auth.TokenManager
+	CFTokens        *cftoken.Issuer
+	CFSubTTL        time.Duration
+	Rooms           RoomAPI
+	Danmaku         *danmaku.Service
+	Likes           *like.Service
+	Viewers         *viewer.Service
+	Stats           *stats.Service
+	Gifts           *gift.Service
+	Wallet          *wallet.Service
+	CommerceURL     string
+	InteractionURL  string
+	IdentityRoomURL string
+}
+type RoomAPI interface {
+	Create(context.Context, int64, string) (room.Room, error)
+	Get(context.Context, int64) (room.Room, error)
+	List(context.Context, room.Status, int) ([]room.Room, error)
+	Start(context.Context, int64, int64) (room.Room, error)
+	Stop(context.Context, int64, int64) (room.Room, error)
+	Join(context.Context, int64, int64) (room.Room, error)
+	IsMuted(context.Context, int64, int64) (bool, error)
+	IsBanned(context.Context, int64, int64) (bool, error)
+	Mute(context.Context, int64, int64, int64, time.Duration, string) error
+	Unmute(context.Context, int64, int64, int64) error
+	Ban(context.Context, int64, int64, int64, string) error
+	Unban(context.Context, int64, int64, int64) error
 }
 
 func New(d Deps) *Server {
@@ -80,6 +103,45 @@ func New(d Deps) *Server {
 		log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
 		cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, danmaku: d.Danmaku,
 		likes: d.Likes, viewers: d.Viewers, stats: d.Stats, gifts: d.Gifts, wallet: d.Wallet, mux: http.NewServeMux(),
+	}
+	if raw := strings.TrimSpace(d.CommerceURL); raw != "" {
+		target, err := url.Parse(raw)
+		if err == nil && target.Scheme != "" && target.Host != "" {
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+				s.log.Error("commerce proxy failed", "error", err)
+				writeError(w, http.StatusBadGateway, "COMMERCE_UNAVAILABLE", "commerce service unavailable")
+			}
+			s.commerce = proxy
+		} else {
+			s.log.Warn("invalid COMMERCE_BASE_URL; using local commerce handlers", "value", raw, "error", err)
+		}
+	}
+	if raw := strings.TrimSpace(d.InteractionURL); raw != "" {
+		target, err := url.Parse(raw)
+		if err == nil && target.Scheme != "" && target.Host != "" {
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+				s.log.Error("interaction proxy failed", "error", err)
+				writeError(w, http.StatusBadGateway, "INTERACTION_UNAVAILABLE", "interaction service unavailable")
+			}
+			s.interaction = proxy
+		} else {
+			s.log.Warn("invalid INTERACTION_BASE_URL; using local interaction handlers", "value", raw, "error", err)
+		}
+	}
+	if raw := strings.TrimSpace(d.IdentityRoomURL); raw != "" {
+		target, err := url.Parse(raw)
+		if err == nil && target.Scheme != "" && target.Host != "" {
+			p := httputil.NewSingleHostReverseProxy(target)
+			p.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
+				s.log.Error("identity-room proxy failed", "error", err)
+				writeError(w, http.StatusBadGateway, "IDENTITY_ROOM_UNAVAILABLE", "identity-room service unavailable")
+			}
+			s.identityRoom = p
+		} else {
+			s.log.Warn("invalid IDENTITY_ROOM_BASE_URL; using local identity-room handlers", "value", raw, "error", err)
+		}
 	}
 	s.routes()
 	return s
@@ -104,39 +166,158 @@ func (s *Server) routes() {
 	}
 	s.mux.HandleFunc("GET /demo", s.demo)
 
-	s.mux.HandleFunc("POST /api/v1/auth/register", s.register)
-	s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
-	s.mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.me))
-	s.mux.HandleFunc("POST /api/v1/realtime/token", s.requireAuth(s.realtimeToken))
+	s.mux.Handle("POST /api/v1/auth/register", s.identityOr(http.HandlerFunc(s.register)))
+	s.mux.Handle("POST /api/v1/auth/login", s.identityOr(http.HandlerFunc(s.login)))
+	s.mux.Handle("GET /api/v1/me", s.identityOr(s.requireAuth(s.me)))
+	s.mux.Handle("POST /api/v1/realtime/token", s.identityOr(s.requireAuth(s.realtimeToken)))
 
-	s.mux.HandleFunc("POST /api/v1/rooms", s.requireAuth(s.createRoom))
-	s.mux.HandleFunc("GET /api/v1/rooms", s.listRooms)
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}", s.getRoom)
+	s.mux.Handle("POST /api/v1/rooms", s.identityOr(s.requireAuth(s.createRoom)))
+	s.mux.Handle("GET /api/v1/rooms", s.identityOr(http.HandlerFunc(s.listRooms)))
+	s.mux.Handle("GET /api/v1/rooms/{room_id}", s.identityOr(http.HandlerFunc(s.getRoom)))
 	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/messages", s.roomMessages)
 	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/top-viewers", s.topViewers)
 	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/viewers", s.roomViewers)
-	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/start", s.requireAuth(s.startRoom))
-	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/stop", s.requireAuth(s.stopRoom))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/start", s.identityOr(s.requireAuth(s.startRoom)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/stop", s.identityOr(s.requireAuth(s.stopRoom)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/join", s.interactionOr(s.requireAuth(s.joinRoom)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/leave", s.interactionOr(s.requireAuth(s.leaveRoom)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/danmaku", s.interactionOr(s.requireAuth(s.sendDanmaku)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/like", s.interactionOr(s.requireAuth(s.likeRoom)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/heartbeat", s.interactionOr(s.requireAuth(s.heartbeatRoom)))
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/stats", s.roomStats)
+	s.mux.Handle("GET /api/v1/gifts", s.commerceOr(http.HandlerFunc(s.listGifts)))
+	s.mux.Handle("GET /api/v1/wallet", s.commerceOr(s.requireAuth(s.walletBalance)))
+	s.mux.Handle("GET /api/v1/wallet/transactions", s.commerceOr(s.requireAuth(s.walletTransactions)))
+	s.mux.Handle("POST /api/v1/wallet/dev-credit", s.commerceOr(s.requireAuth(s.devWalletCredit)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/gifts", s.commerceOr(s.requireAuth(s.sendGift)))
+	s.mux.Handle("GET /api/v1/gift-orders/{order_no}", s.commerceOr(s.requireAuth(s.giftOrder)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/mutes", s.identityOr(s.requireAuth(s.muteUser)))
+	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.identityOr(s.requireAuth(s.unmuteUser)))
+	s.mux.Handle("POST /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.banUser)))
+	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.identityOr(s.requireAuth(s.unbanUser)))
+
+	// The user-facing SPA is served by the API process so local Docker Compose and
+	// Kubernetes ingress can use a single origin for HTTP APIs and WebSocket auth.
+	s.mux.Handle("GET /", webui.Handler())
+}
+
+func (s *Server) commerceOr(local http.Handler) http.Handler {
+	if s.commerce != nil {
+		return s.commerce
+	}
+	return local
+}
+func (s *Server) interactionOr(local http.Handler) http.Handler {
+	if s.interaction != nil {
+		return s.interaction
+	}
+	return local
+}
+func (s *Server) identityOr(local http.Handler) http.Handler {
+	if s.identityRoom != nil {
+		return s.identityRoom
+	}
+	return local
+}
+
+// NewInteraction exposes the Stage 3 high-frequency write routes only. It
+// intentionally preserves the public v1 contract, allowing live-api to route
+// traffic by configuration without client changes or dual writes.
+func NewInteraction(d Deps) http.Handler {
+	s := &Server{log: d.Log, mysql: d.MySQL, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens, cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, danmaku: d.Danmaku, likes: d.Likes, viewers: d.Viewers, stats: d.Stats, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("GET /ready", s.ready)
+	if s.metrics != nil {
+		s.mux.Handle("GET /metrics", s.metrics.Handler())
+	}
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/join", s.requireAuth(s.joinRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/leave", s.requireAuth(s.leaveRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/danmaku", s.requireAuth(s.sendDanmaku))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/like", s.requireAuth(s.likeRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/heartbeat", s.requireAuth(s.heartbeatRoom))
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/stats", s.roomStats)
-	s.mux.HandleFunc("GET /api/v1/gifts", s.listGifts)
-	s.mux.HandleFunc("GET /api/v1/wallet", s.requireAuth(s.walletBalance))
-	s.mux.HandleFunc("GET /api/v1/wallet/transactions", s.requireAuth(s.walletTransactions))
-	s.mux.HandleFunc("POST /api/v1/wallet/dev-credit", s.requireAuth(s.devWalletCredit))
-	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/gifts", s.requireAuth(s.sendGift))
-	s.mux.HandleFunc("GET /api/v1/gift-orders/{order_no}", s.requireAuth(s.giftOrder))
+	return s.Handler()
+}
+
+// NewIdentityRoom is the Stage 4 owner for identity, room lifecycle and
+// governance. The gateway forwards the existing v1 contract unchanged.
+func NewIdentityRoom(d Deps) http.Handler {
+	s := &Server{log: d.Log, mysql: d.MySQL, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens, cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, stats: d.Stats, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("GET /ready", s.ready)
+	if s.metrics != nil {
+		s.mux.Handle("GET /metrics", s.metrics.Handler())
+	}
+	s.mux.HandleFunc("POST /api/v1/auth/register", s.register)
+	s.mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	s.mux.HandleFunc("GET /api/v1/me", s.requireAuth(s.me))
+	s.mux.HandleFunc("POST /api/v1/realtime/token", s.requireAuth(s.realtimeToken))
+	s.mux.HandleFunc("POST /api/v1/rooms", s.requireAuth(s.createRoom))
+	s.mux.HandleFunc("GET /api/v1/rooms", s.listRooms)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}", s.getRoom)
+	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/start", s.requireAuth(s.startRoom))
+	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/stop", s.requireAuth(s.stopRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/mutes", s.requireAuth(s.muteUser))
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.requireAuth(s.unmuteUser))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/bans", s.requireAuth(s.banUser))
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.requireAuth(s.unbanUser))
-
-	// The user-facing SPA is served by the API process so local Docker Compose and
-	// Kubernetes ingress can use a single origin for HTTP APIs and WebSocket auth.
-	s.mux.Handle("GET /", webui.Handler())
+	// Internal, versioned read contract for the interaction migration. It is not
+	// exposed by the public gateway Service.
+	s.mux.HandleFunc("GET /internal/v1/rooms/{room_id}/access/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		roomID, ok := pathInt64(w, r, "room_id")
+		if !ok {
+			return
+		}
+		userID, ok := pathInt64(w, r, "user_id")
+		if !ok {
+			return
+		}
+		v, err := s.rooms.Get(r.Context(), roomID)
+		if err != nil {
+			handleRoomError(w, err)
+			return
+		}
+		banned, err := s.rooms.IsBanned(r.Context(), roomID, userID)
+		if err != nil {
+			writeError(w, 500, "INTERNAL_ERROR", "access lookup failed")
+			return
+		}
+		muted, err := s.rooms.IsMuted(r.Context(), roomID, userID)
+		if err != nil {
+			writeError(w, 500, "INTERNAL_ERROR", "access lookup failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"room": v, "banned": banned, "muted": muted})
+	})
+	s.mux.HandleFunc("GET /internal/v1/rooms/{room_id}", s.getRoom)
+	s.mux.HandleFunc("GET /internal/v1/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		userID, ok := pathInt64(w, r, "user_id")
+		if !ok {
+			return
+		}
+		u, err := s.auth.User(r.Context(), userID)
+		if err != nil {
+			writeError(w, 404, "USER_NOT_FOUND", "user not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
+	})
+	s.mux.HandleFunc("POST /internal/v1/rooms/{room_id}/join/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		roomID, ok := pathInt64(w, r, "room_id")
+		if !ok {
+			return
+		}
+		userID, ok := pathInt64(w, r, "user_id")
+		if !ok {
+			return
+		}
+		v, err := s.rooms.Join(r.Context(), roomID, userID)
+		if err != nil {
+			handleRoomError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, v)
+	})
+	return s.Handler()
 }
 
 func (s *Server) topViewers(w http.ResponseWriter, r *http.Request) {
@@ -485,17 +666,25 @@ func (s *Server) joinRoom(w http.ResponseWriter, r *http.Request, userID int64) 
 		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "viewer tracking unavailable")
 		return
 	}
-	snapshot, err := s.stats.Get(r.Context(), roomID)
-	if err != nil {
-		s.log.Error("load stats on join", "error", err, "room_id", roomID)
-		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "room stats unavailable")
-		return
+	var snapshot stats.Snapshot
+	if s.stats != nil {
+		var err error
+		snapshot, err = s.stats.Get(r.Context(), roomID)
+		if err != nil {
+			s.log.Error("load stats on join", "error", err, "room_id", roomID)
+			writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "room stats unavailable")
+			return
+		}
 	}
 	snapshot.ViewerCount = viewerState.ViewerCount
 	uid := strconv.FormatInt(userID, 10)
 	channels := []string{realtime.RoomStream(roomID), realtime.RoomStats(roomID)}
 	subs := make([]subscription, 0, len(channels))
 	for _, ch := range channels {
+		if s.cfTokens == nil {
+			writeError(w, http.StatusServiceUnavailable, "REALTIME_UNAVAILABLE", "realtime token issuer unavailable")
+			return
+		}
 		tok, _, err := s.cfTokens.SubscriptionToken(uid, ch, s.cfSubTTL)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to authorize room subscription")
@@ -966,7 +1155,7 @@ func recoverer(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if v := recover(); v != nil {
-				log.Error("panic recovered", "panic", v, "path", r.URL.Path)
+				log.Error("panic recovered", "panic", v, "path", r.URL.Path, "stack", string(debug.Stack()))
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 			}
 		}()

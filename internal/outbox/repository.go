@@ -132,3 +132,21 @@ func (r *Repository) PendingCount(ctx context.Context) (int64, error) {
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM outbox_events WHERE status<>1`).Scan(&n)
 	return n, err
 }
+
+// PendingStats returns the number of unpublished events and the age of the
+// oldest one. The age is calculated by MySQL so all publisher replicas report
+// the same value irrespective of their local clocks.
+func (r *Repository) PendingStats(ctx context.Context) (int64, time.Duration, error) {
+	var count, oldestAgeMicros int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(TIMESTAMPDIFF(MICROSECOND, MIN(created_at), NOW(3)), 0)
+FROM outbox_events
+WHERE status<>1`).Scan(&count, &oldestAgeMicros)
+	if err != nil {
+		return 0, 0, err
+	}
+	if oldestAgeMicros < 0 {
+		oldestAgeMicros = 0
+	}
+	return count, time.Duration(oldestAgeMicros) * time.Microsecond, nil
+}

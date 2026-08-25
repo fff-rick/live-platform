@@ -153,6 +153,11 @@ spec:
           envFrom:
             - configMapRef: {name: live-platform-config}
             - secretRef: {name: live-platform-runtime}
+          # Connection limits are per Pod, not per cluster. Keep the API under
+          # the documented budget when event workers are split below.
+          env:
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '20'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '10'}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 256Mi}
@@ -160,22 +165,227 @@ spec:
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: live-worker}
+metadata: {name: live-commerce}
 spec:
   replicas: 1
-  selector: {matchLabels: {app: live-worker}}
+  selector: {matchLabels: {app: live-commerce}}
   template:
-    metadata: {labels: {app: live-worker}}
+    metadata: {labels: {app: live-commerce}}
     spec:
+      terminationGracePeriodSeconds: 30
       imagePullSecrets: [{name: ghcr-secret}]
       containers:
-        - name: live-worker
+        - name: live-commerce
+          image: live-platform
+          command: [live-commerce]
+          ports: [{name: http, containerPort: 8081}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-interaction}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: live-interaction}}
+  template:
+    metadata: {labels: {app: live-interaction}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-interaction
+          image: live-platform
+          command: [live-interaction]
+          ports: [{name: http, containerPort: 8082}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          # Read-only transitional dependency; reserve a small slice of the
+          # MySQL connection budget until Stage 4 projections remove it.
+          env:
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '5'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '2'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 512Mi}
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-identity-room}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: live-identity-room}}
+  template:
+    metadata: {labels: {app: live-identity-room}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-identity-room
+          image: live-platform
+          command: [live-identity-room]
+          ports: [{name: http, containerPort: 8083}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '15'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '8'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker-stats}
+spec:
+  # No room ownership lease exists yet. Keep exactly one stats aggregator; it
+  # must not receive a generic HPA before distributed ownership is implemented.
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: live-worker-stats}}
+  template:
+    metadata: {labels: {app: live-worker-stats, app.kubernetes.io/component: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker-stats
           image: live-platform
           command: [live-worker]
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
             - secretRef: {name: live-platform-runtime}
+          env: [{name: WORKER_ROLES, value: stats}]
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker-like-snapshot}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: live-worker-like-snapshot}}
+  template:
+    metadata: {labels: {app: live-worker-like-snapshot, app.kubernetes.io/component: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker-like-snapshot
+          image: live-platform
+          command: [live-worker]
+          ports: [{name: metrics, containerPort: 9090}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: WORKER_ROLES, value: like-snapshot}
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker-outbox}
+spec:
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 0, maxUnavailable: 1}}
+  selector: {matchLabels: {app: live-worker-outbox}}
+  template:
+    metadata: {labels: {app: live-worker-outbox, app.kubernetes.io/component: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker-outbox
+          image: live-platform
+          command: [live-worker]
+          ports: [{name: metrics, containerPort: 9090}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: WORKER_ROLES, value: outbox}
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker-gift-delivery}
+spec:
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 0, maxUnavailable: 1}}
+  selector: {matchLabels: {app: live-worker-gift-delivery}}
+  template:
+    metadata: {labels: {app: live-worker-gift-delivery, app.kubernetes.io/component: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker-gift-delivery
+          image: live-platform
+          command: [live-worker]
+          ports: [{name: metrics, containerPort: 9090}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: WORKER_ROLES, value: gift-consumer}
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 1000m, memory: 512Mi}
+          readinessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-worker-danmaku-archive}
+spec:
+  replicas: 1
+  strategy: {type: RollingUpdate, rollingUpdate: {maxSurge: 0, maxUnavailable: 1}}
+  selector: {matchLabels: {app: live-worker-danmaku-archive}}
+  template:
+    metadata: {labels: {app: live-worker-danmaku-archive, app.kubernetes.io/component: worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-worker-danmaku-archive
+          image: live-platform
+          command: [live-worker]
+          ports: [{name: metrics, containerPort: 9090}]
+          envFrom:
+            - configMapRef: {name: live-platform-config}
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - {name: WORKER_ROLES, value: danmaku-consumer}
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 1000m, memory: 512Mi}
+          readinessProbe: {httpGet: {path: /ready, port: metrics}, initialDelaySeconds: 5, periodSeconds: 5}

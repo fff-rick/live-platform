@@ -26,7 +26,7 @@ func NewKafkaProducer(producer AsyncProducer, topic string, log *slog.Logger) *K
 }
 
 func (p *KafkaProducer) ProduceDanmaku(ctx context.Context, e Event) error {
-	envelope, err := mq.NewEnvelopeContext(ctx, e.MessageID, "danmaku.sent", e.RoomID, e)
+	envelope, err := mq.NewEnvelopeContext(ctx, e.MessageID, mq.EventTypeDanmakuSent, e.RoomID, e)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,10 @@ func (h *PersistenceHandler) Handle(ctx context.Context, rec mq.Record) error {
 	if err := json.Unmarshal(rec.Value, &envelope); err != nil {
 		return mq.Permanent(fmt.Errorf("decode danmaku envelope: %w", err))
 	}
-	if envelope.EventType != "danmaku.sent" {
+	if err := envelope.ValidateRoomEnvelope(); err != nil {
+		return mq.Permanent(fmt.Errorf("invalid danmaku envelope: %w", err))
+	}
+	if envelope.EventType != mq.EventTypeDanmakuSent {
 		return mq.Permanent(fmt.Errorf("unexpected danmaku event type %q", envelope.EventType))
 	}
 	var e Event

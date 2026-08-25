@@ -1,0 +1,29 @@
+groups:
+  - name: live-platform-stage0
+    rules:
+      - alert: LiveOutboxStalled
+        expr: max by (job) (live_outbox_oldest_pending_age_seconds) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox has an unpublished event older than one minute"
+          runbook: "Check live_outbox_pending, Kafka producer errors, and the outbox publisher logs."
+
+      - alert: LiveKafkaConsumerLagHigh
+        expr: max by (group, topic, partition) (live_kafka_consumer_lag) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka consumer lag exceeds 1,000 records"
+          runbook: "Check consumer health, processing errors, partition assignment, and broker availability."
+
+      - alert: LiveDatabasePoolContention
+        expr: sum by (service, pool) (rate(live_db_pool_wait_duration_seconds_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database pool wait exceeds 100ms per second"
+          runbook: "Check database saturation and total connection budget before increasing pod or pool counts."

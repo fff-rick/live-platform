@@ -1,4 +1,4 @@
-.PHONY: run worker test vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery
+.PHONY: run worker test test-contracts vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery
 
 run:
 	go run ./cmd/api
@@ -8,6 +8,11 @@ worker:
 
 test:
 	go test ./...
+
+# Fast compatibility gate for the wire contracts that must stay stable during
+# the modular-monolith to microservices migration.
+test-contracts:
+	go test ./internal/mq ./internal/realtime ./internal/danmaku ./internal/gift
 
 vet:
 	go vet ./...
@@ -108,7 +113,7 @@ m7-gift-dbpool-ab:
 m7-gift-1000-wallet-capacity:
 	./scripts/m7_gift_1000_wallet_capacity.sh
 
-.PHONY: migrate smoke-m8 m8-k8s-validate gitops-demo-preflight
+.PHONY: migrate smoke-m8 m8-k8s-validate gitops-demo-preflight phase1-k8s-validate
 migrate:
 	go run ./cmd/migrate
 
@@ -121,6 +126,23 @@ m8-k8s-validate:
 gitops-demo-preflight:
 	./scripts/m8_deploy_k8s.sh
 
+phase1-k8s-validate:
+	python3 scripts/phase1_k8s_static_validate.py
+
 .PHONY: smoke-ui
 smoke-ui:
 	./scripts/ui_smoke.sh
+
+.PHONY: ha-local-create ha-local-kafka
+ha-local-create:
+	kind create cluster --config deploy/k8s/ha-local/kind-config.yaml
+
+ha-local-kafka:
+	kubectl apply -f deploy/k8s/ha-local/kafka.yaml
+
+.PHONY: compose-ha-up compose-ha-down
+compose-ha-up:
+	docker compose -f docker-compose.yml -f docker-compose.ha.yml up --build --scale centrifugo=3
+
+compose-ha-down:
+	docker compose -f docker-compose.yml -f docker-compose.ha.yml down -v

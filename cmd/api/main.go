@@ -121,7 +121,7 @@ func main() {
 		Log: log, MySQL: mysql, History: mysql, Redis: redis, Centrifugo: publisher, Metrics: metrics,
 		Auth: authService, AppTokens: appTokens, CFTokens: cfTokens, CFSubTTL: cfg.Centrifugo.SubscriptionTokenTTL,
 		Rooms: roomService, Danmaku: danmakuService, Likes: likeService, Viewers: viewerService, Stats: statsService,
-		Gifts: giftService, Wallet: walletService,
+		Gifts: giftService, Wallet: walletService, CommerceURL: cfg.Commerce.BaseURL, InteractionURL: cfg.Interaction.BaseURL, IdentityRoomURL: cfg.IdentityRoom.BaseURL,
 	})
 
 	srv := &http.Server{Addr: cfg.HTTP.Addr, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}

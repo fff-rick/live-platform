@@ -10,6 +10,9 @@ import (
 
 type Config struct {
 	HTTP          HTTPConfig
+	Commerce      CommerceConfig
+	Interaction   InteractionConfig
+	IdentityRoom  IdentityRoomConfig
 	MySQL         MySQLConfig
 	Redis         RedisConfig
 	Centrifugo    CentrifugoConfig
@@ -27,6 +30,22 @@ type Config struct {
 }
 
 type HTTPConfig struct{ Addr string }
+
+// CommerceConfig keeps the public routing switch separate from the commerce
+// process listener. An empty BaseURL leaves live-api on the local fallback,
+// allowing a route-by-route rollback during the Stage 2 migration.
+type CommerceConfig struct {
+	HTTPAddr string
+	BaseURL  string
+}
+
+// InteractionConfig controls the Stage 3 strangler route. BaseURL is empty
+// during rollback, which leaves the existing in-process handlers active.
+type InteractionConfig struct {
+	HTTPAddr string
+	BaseURL  string
+}
+type IdentityRoomConfig struct{ HTTPAddr, BaseURL string }
 type MySQLConfig struct {
 	DSN             string
 	MaxOpenConns    int
@@ -356,7 +375,10 @@ func Load() (Config, error) {
 		}
 	}
 	return Config{
-		HTTP: HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
+		HTTP:         HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
+		Commerce:     CommerceConfig{HTTPAddr: env("COMMERCE_HTTP_ADDR", ":8081"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("COMMERCE_BASE_URL")), "/")},
+		Interaction:  InteractionConfig{HTTPAddr: env("INTERACTION_HTTP_ADDR", ":8082"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("INTERACTION_BASE_URL")), "/")},
+		IdentityRoom: IdentityRoomConfig{HTTPAddr: env("IDENTITY_ROOM_HTTP_ADDR", ":8083"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("IDENTITY_ROOM_BASE_URL")), "/")},
 		MySQL: MySQLConfig{
 			DSN:             env("MYSQL_DSN", "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4"),
 			MaxOpenConns:    mysqlMaxOpenConns,

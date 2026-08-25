@@ -1,0 +1,60 @@
+# Requires the Strimzi operator installed by README.md. This is KRaft: each
+# node is both a controller and broker so one node may fail while quorum holds.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: kafka
+  namespace: live-platform
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+  entityOperator:
+    topicOperator: {}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: live-platform
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  replicas: 3
+  roles: [controller, broker]
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 5Gi
+        deleteClaim: true
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: live.danmaku.v1
+  namespace: live-platform
+  labels: {strimzi.io/cluster: kafka}
+spec: {partitions: 6, replicas: 3}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: live.gift.v1
+  namespace: live-platform
+  labels: {strimzi.io/cluster: kafka}
+spec: {partitions: 6, replicas: 3}

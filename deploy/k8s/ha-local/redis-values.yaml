@@ -1,0 +1,13 @@
+architecture: replication
+auth:
+  enabled: true
+  existingSecret: live-platform-redis
+  existingSecretPasswordKey: redis-password
+sentinel:
+  enabled: true
+  quorum: 2
+master:
+  persistence: {size: 2Gi}
+replica:
+  replicaCount: 3
+  persistence: {size: 2Gi}
