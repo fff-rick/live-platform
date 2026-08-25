@@ -50,7 +50,11 @@ func main() {
 		log.Error("open redis", "error", err)
 		os.Exit(1)
 	}
-	defer redis.Close()
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("close redis", "error", err)
+		}
+	}()
 	producer, err := mq.NewProducerWithConfig(mq.ClientConfig{Brokers: cfg.Kafka.Brokers, TLSEnabled: cfg.Kafka.TLSEnabled, SASLMechanism: cfg.Kafka.SASLMechanism, SASLUsername: cfg.Kafka.SASLUsername, SASLPassword: cfg.Kafka.SASLPassword}, log, metrics)
 	if err != nil {
 		log.Error("create kafka producer", "error", err)

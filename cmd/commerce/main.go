@@ -45,14 +45,22 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer mysql.Close()
+	defer func() {
+		if err := mysql.Close(); err != nil {
+			log.Error("close mysql", "error", err)
+		}
+	}()
 	metrics.RegisterDBPool("mysql", mysql.Stats)
 	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ActiveRoomShards: cfg.Engagement.ActiveRoomShards})
 	if err != nil {
 		log.Error("open redis", "error", err)
 		os.Exit(1)
 	}
-	defer redis.Close()
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("close redis", "error", err)
+		}
+	}()
 
 	rooms := room.NewService(room.NewRepository(mysql)) // Transitional room read dependency; Stage 4 replaces it with a room read model/API.
 	gifts := gift.NewService(gift.NewRepository(mysql), rooms, redisstore.NewFixedWindowLimiter(redis), gift.Config{MaxCountPerRequest: cfg.Gift.MaxCountPerRequest, UserRateLimit: cfg.Gift.UserRateLimit, UserRateWindow: cfg.Gift.UserRateWindow}, cfg.Kafka.GiftTopic)

@@ -19,16 +19,20 @@ type Client struct {
 func New(base string) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 800 * time.Millisecond}}
 }
-func (c *Client) call(ctx context.Context, method, path string, out any) error {
-	r, e := http.NewRequestWithContext(ctx, method, c.base+path, nil)
-	if e != nil {
-		return e
+func (c *Client) call(ctx context.Context, method, path string, out any) (err error) {
+	r, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	if err != nil {
+		return err
 	}
-	res, e := c.http.Do(r)
-	if e != nil {
-		return e
+	res, err := c.http.Do(r)
+	if err != nil {
+		return err
 	}
-	defer res.Body.Close()
+	defer func() {
+		if closeErr := res.Body.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close identity-room response body: %w", closeErr)
+		}
+	}()
 	if res.StatusCode/100 != 2 {
 		return fmt.Errorf("identity-room status=%d", res.StatusCode)
 	}

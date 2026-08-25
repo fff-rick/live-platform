@@ -44,14 +44,22 @@ func main() {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Error("close mysql", "error", err)
+		}
+	}()
 	m.RegisterDBPool("mysql", db.Stats)
 	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ActiveRoomShards: cfg.Engagement.ActiveRoomShards})
 	if err != nil {
 		log.Error("open redis", "error", err)
 		os.Exit(1)
 	}
-	defer redis.Close()
+	defer func() {
+		if err := redis.Close(); err != nil {
+			log.Error("close redis", "error", err)
+		}
+	}()
 	tokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
 	h := httpapi.NewIdentityRoom(httpapi.Deps{Log: log, MySQL: db, Redis: redis, Centrifugo: realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, m), Metrics: m, Auth: auth.NewService(auth.NewRepository(db), tokens), AppTokens: tokens, CFTokens: cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL), CFSubTTL: cfg.Centrifugo.SubscriptionTokenTTL, Rooms: room.NewService(room.NewRepository(db)), Stats: stats.NewService(stats.NewRedisStore(redis))})
 	srv := &http.Server{Addr: cfg.IdentityRoom.HTTPAddr, Handler: h, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}
