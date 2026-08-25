@@ -52,7 +52,10 @@ func (h *ConsumerHandler) Handle(ctx context.Context, rec mq.Record) error {
 	if err := json.Unmarshal(rec.Value, &envelope); err != nil {
 		return mq.Permanent(fmt.Errorf("decode gift envelope: %w", err))
 	}
-	if envelope.EventType != "gift.sent" || envelope.EventID == "" || envelope.RoomID <= 0 {
+	if err := envelope.ValidateRoomEnvelope(); err != nil {
+		return mq.Permanent(fmt.Errorf("invalid gift envelope: %w", err))
+	}
+	if envelope.EventType != mq.EventTypeGiftSent {
 		return mq.Permanent(fmt.Errorf("invalid gift envelope"))
 	}
 	done, err := h.dedup.Begin(ctx, h.group, envelope.EventID, h.lease)

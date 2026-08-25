@@ -51,7 +51,32 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: live-worker
+  name: live-commerce
 spec:
-  selector: {app: live-worker}
+  selector: {app: live-commerce}
+  ports: [{name: http, port: 8081, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-interaction
+spec:
+  selector: {app: live-interaction}
+  ports: [{name: http, port: 8082, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: live-identity-room}
+spec:
+  selector: {app: live-identity-room}
+  ports: [{name: http, port: 8083, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: live-worker-metrics
+spec:
+  # One metrics Service exposes the independently deployed Worker roles to a
+  # future Prometheus ServiceMonitor without coupling their business traffic.
+  selector: {app.kubernetes.io/component: worker}
   ports: [{name: metrics, port: 9090, targetPort: metrics}]

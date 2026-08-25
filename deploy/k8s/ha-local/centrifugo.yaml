@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: centrifugo-ha, namespace: live-platform}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: centrifugo-ha}}
+  template:
+    metadata: {labels: {app: centrifugo-ha}}
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {matchLabels: {app: centrifugo-ha}}
+      containers:
+        - name: centrifugo
+          image: centrifugo/centrifugo:v6.9.1
+          args: [centrifugo, -c, /centrifugo/config.json]
+          ports: [{containerPort: 8000, name: http}]
+          volumeMounts: [{name: config, mountPath: /centrifugo, readOnly: true}]
+      volumes: [{name: config, configMap: {name: centrifugo-ha-config}}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: centrifugo-ha, namespace: live-platform}
+spec:
+  minAvailable: 2
+  selector: {matchLabels: {app: centrifugo-ha}}

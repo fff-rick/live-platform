@@ -12,7 +12,7 @@ type Producer interface {
 	ProduceSync(context.Context, string, string, []byte) error
 }
 type Metrics interface {
-	OutboxPendingSet(int64)
+	OutboxPendingSet(int64, time.Duration)
 	OutboxPublished(result string)
 	OutboxRetried()
 }
@@ -96,12 +96,12 @@ func (p *Publisher) updatePending(ctx context.Context) {
 	if p.metrics == nil {
 		return
 	}
-	n, err := p.repo.PendingCount(ctx)
+	n, oldestAge, err := p.repo.PendingStats(ctx)
 	if err != nil {
 		p.log.WarnContext(ctx, "count pending outbox failed", "error", err)
 		return
 	}
-	p.metrics.OutboxPendingSet(n)
+	p.metrics.OutboxPendingSet(n, oldestAge)
 }
 
 func retryDelay(attempt int) time.Duration {

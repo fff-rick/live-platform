@@ -171,7 +171,7 @@ VALUES (?, ?, 'GIFT', ?, ?, ?, ?, NOW(3))`,
 	if p.EventID == "" || p.GiftTopic == "" {
 		return Order{}, false, errors.New("gift outbox event configuration is required")
 	}
-	envelope, err := mq.NewEnvelopeContext(ctx, p.EventID, "gift.sent", p.RoomID, map[string]any{
+	envelope, err := mq.NewEnvelopeContext(ctx, p.EventID, mq.EventTypeGiftSent, p.RoomID, map[string]any{
 		"order_no": p.OrderNo, "user_id": p.UserID, "anchor_id": p.AnchorID, "gift_id": p.GiftID,
 		"gift_name": g.Name, "count": p.Count, "unit_price": g.Price, "total_amount": total,
 	})
@@ -185,8 +185,8 @@ VALUES (?, ?, 'GIFT', ?, ?, ?, ?, NOW(3))`,
 	_, outboxSpan := otel.Tracer("live-platform/gift/repository").Start(ctx, "gift.db.outbox_insert")
 	_, outboxErr := tx.ExecContext(ctx, `
 INSERT INTO outbox_events(event_id, aggregate_type, aggregate_id, event_type, topic, partition_key, payload, status, retry_count, next_retry_at, created_at)
-VALUES (?, 'GIFT_ORDER', ?, 'gift.sent', ?, ?, ?, 0, 0, NOW(3), NOW(3))`,
-		p.EventID, p.OrderNo, p.GiftTopic, strconv.FormatInt(p.RoomID, 10), payload)
+VALUES (?, 'GIFT_ORDER', ?, ?, ?, ?, ?, 0, 0, NOW(3), NOW(3))`,
+		p.EventID, p.OrderNo, mq.EventTypeGiftSent, p.GiftTopic, strconv.FormatInt(p.RoomID, 10), payload)
 	if outboxErr != nil {
 		outboxSpan.RecordError(outboxErr)
 		outboxSpan.SetStatus(codes.Error, outboxErr.Error())

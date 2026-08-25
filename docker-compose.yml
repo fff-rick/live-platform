@@ -13,6 +13,12 @@ x-app-env: &app-env
   CENTRIFUGO_SUBSCRIPTION_TOKEN_TTL: "5m"
   AUTH_JWT_SECRET: "dev-app-jwt-secret-change-me"
   AUTH_TOKEN_TTL: "24h"
+  COMMERCE_HTTP_ADDR: ":8081"
+  COMMERCE_BASE_URL: "http://live-commerce:8081"
+  INTERACTION_HTTP_ADDR: ":8082"
+  INTERACTION_BASE_URL: "http://live-interaction:8082"
+  IDENTITY_ROOM_HTTP_ADDR: ":8083"
+  IDENTITY_ROOM_BASE_URL: "http://live-identity-room:8083"
   DANMAKU_SENSITIVE_WORDS: "spam,banned"
   DANMAKU_USER_RATE_LIMIT: "${DANMAKU_USER_RATE_LIMIT:-5}"
   DANMAKU_USER_RATE_WINDOW: "${DANMAKU_USER_RATE_WINDOW:-10s}"
@@ -170,6 +176,39 @@ services:
     ports: ["8080:8080"]
     depends_on:
       live-migrate: {condition: service_completed_successfully}
+      live-commerce: {condition: service_started}
+      live-interaction: {condition: service_started}
+      live-identity-room: {condition: service_started}
+      redis: {condition: service_healthy}
+      centrifugo: {condition: service_started}
+      otel-collector: {condition: service_started}
+
+  live-commerce:
+    build: .
+    command: ["live-commerce"]
+    environment: *app-env
+    depends_on:
+      live-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      otel-collector: {condition: service_started}
+
+  live-interaction:
+    build: .
+    command: ["live-interaction"]
+    environment: *app-env
+    depends_on:
+      live-migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      centrifugo: {condition: service_started}
+      kafka-init: {condition: service_completed_successfully}
+      otel-collector: {condition: service_started}
+
+  live-identity-room:
+    build: .
+    command: ["live-identity-room"]
+    environment: *app-env
+    depends_on:
+      live-migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       centrifugo: {condition: service_started}
       otel-collector: {condition: service_started}
@@ -191,6 +230,7 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     volumes:
       - ./deployments/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deployments/prometheus/stage0-alerts.yml:/etc/prometheus/rules/stage0.yml:ro
       - prometheus_data:/prometheus
     ports: ["9091:9090"]
     depends_on:
