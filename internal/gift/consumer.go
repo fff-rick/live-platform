@@ -18,6 +18,7 @@ type DedupStore interface {
 }
 
 type realtimeGiftPayload struct {
+	MessageID   string `json:"message_id"`
 	OrderNo     string `json:"order_no"`
 	UserID      int64  `json:"user_id"`
 	AnchorID    int64  `json:"anchor_id"`
@@ -28,12 +29,18 @@ type realtimeGiftPayload struct {
 	TotalAmount int64  `json:"total_amount"`
 }
 
-func validRealtimeGiftPayload(raw json.RawMessage) bool {
+func decodeRealtimeGiftPayload(raw json.RawMessage) (realtimeGiftPayload, bool) {
 	var p realtimeGiftPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return false
+		return realtimeGiftPayload{}, false
 	}
-	return p.OrderNo != "" && p.UserID > 0 && p.AnchorID > 0 && p.GiftID > 0 && p.GiftName != "" && p.Count > 0 && p.UnitPrice >= 0 && p.TotalAmount >= 0
+	valid := p.OrderNo != "" && p.UserID > 0 && p.AnchorID > 0 && p.GiftID > 0 && p.GiftName != "" && p.Count > 0 && p.UnitPrice >= 0 && p.TotalAmount >= 0
+	if !valid {
+		return realtimeGiftPayload{}, false
+	}
+	// 消费者根据订单号统一业务身份，也兼容部署前已经写入、尚未消费且不含 message_id 的 Outbox 记录。
+	p.MessageID = messageID(p.OrderNo)
+	return p, true
 }
 
 type ConsumerHandler struct {
@@ -69,7 +76,8 @@ func (h *ConsumerHandler) Handle(ctx context.Context, rec mq.Record) error {
 		return nil
 	}
 
-	if len(envelope.Payload) == 0 || !validRealtimeGiftPayload(envelope.Payload) {
+	payload, valid := decodeRealtimeGiftPayload(envelope.Payload)
+	if len(envelope.Payload) == 0 || !valid {
 		err := fmt.Errorf("invalid gift payload")
 		// Poison records are committed by the Kafka loop. Mark the event terminal as well
 		// so processed_events does not retain a stale in-progress lock forever.
@@ -78,13 +86,18 @@ func (h *ConsumerHandler) Handle(ctx context.Context, rec mq.Record) error {
 		}
 		return mq.Permanent(err)
 	}
+	wirePayload, err := json.Marshal(payload)
+	if err != nil {
+		_ = h.dedup.Fail(ctx, h.group, envelope.EventID, err)
+		return fmt.Errorf("encode gift realtime payload: %w", err)
+	}
 	wire := realtime.Event{
 		EventID:   envelope.EventID,
 		Type:      "gift",
 		RoomID:    envelope.RoomID,
 		Priority:  "P1",
 		Timestamp: envelope.CreatedAt.UnixMilli(),
-		Data:      json.RawMessage(envelope.Payload),
+		Data:      wirePayload,
 	}
 	if err := h.publisher.Publish(ctx, realtime.RoomStream(envelope.RoomID), wire); err != nil {
 		_ = h.dedup.Fail(ctx, h.group, envelope.EventID, err)

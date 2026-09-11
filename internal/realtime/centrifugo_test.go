@@ -35,3 +35,25 @@ func TestPublish(t *testing.T) {
 		t.Fatalf("channel=%q", channel)
 	}
 }
+
+func TestUnsubscribe(t *testing.T) {
+	var path, user, channel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		var body unsubscribeRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		user, channel = body.User, body.Channel
+		_, _ = w.Write([]byte(`{"result":{}}`))
+	}))
+	defer srv.Close()
+
+	c := NewCentrifugo(srv.URL, "key-1")
+	if err := c.Unsubscribe(context.Background(), "42", "room:1:stream"); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/unsubscribe" || user != "42" || channel != "room:1:stream" {
+		t.Fatalf("path=%q user=%q channel=%q", path, user, channel)
+	}
+}

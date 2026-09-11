@@ -2,7 +2,7 @@
 set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8080}"
-WORKER_URL="${WORKER_URL:-http://localhost:9090}"
+WORKER_URL="${WORKER_URL:-http://localhost:${WORKER_HOST_PORT:-19090}}"
 CENTRIFUGO_URL="${CENTRIFUGO_URL:-http://localhost:8000}"
 EXPECTED_MIGRATIONS="${EXPECTED_MIGRATIONS:-4}"
 

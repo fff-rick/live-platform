@@ -138,6 +138,12 @@ SELECT EXISTS(SELECT 1 FROM room_bans WHERE room_id=? AND user_id=?)`, roomID, u
 	return banned == 1, err
 }
 
+func (r *Repository) UserExists(ctx context.Context, userID int64) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=?)`, userID).Scan(&exists)
+	return exists == 1, err
+}
+
 func (r *Repository) Ban(ctx context.Context, roomID, userID, createdBy int64, reason string) error {
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO room_bans(room_id, user_id, created_by, reason, created_at)
@@ -149,6 +155,26 @@ ON DUPLICATE KEY UPDATE created_by=VALUES(created_by), reason=VALUES(reason), cr
 func (r *Repository) Unban(ctx context.Context, roomID, userID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM room_bans WHERE room_id=? AND user_id=?`, roomID, userID)
 	return err
+}
+
+func (r *Repository) ListBans(ctx context.Context, roomID int64) ([]Ban, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT b.user_id, u.nickname, b.reason, b.created_at
+FROM room_bans b JOIN users u ON u.id=b.user_id
+WHERE b.room_id=? ORDER BY b.created_at DESC`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Ban, 0)
+	for rows.Next() {
+		var item Ban
+		if err := rows.Scan(&item.UserID, &item.Nickname, &item.Reason, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) IsMuted(ctx context.Context, roomID, userID int64) (bool, error) {
@@ -173,4 +199,25 @@ ON DUPLICATE KEY UPDATE muted_until=VALUES(muted_until), created_by=VALUES(creat
 func (r *Repository) Unmute(ctx context.Context, roomID, userID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM room_mutes WHERE room_id=? AND user_id=?`, roomID, userID)
 	return err
+}
+
+func (r *Repository) ListMutes(ctx context.Context, roomID int64) ([]Mute, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT m.user_id, u.nickname, m.muted_until, m.reason, m.updated_at
+FROM room_mutes m JOIN users u ON u.id=m.user_id
+WHERE m.room_id=? AND (m.muted_until IS NULL OR m.muted_until > NOW(3))
+ORDER BY m.updated_at DESC`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]Mute, 0)
+	for rows.Next() {
+		var item Mute
+		if err := rows.Scan(&item.UserID, &item.Nickname, &item.MutedUntil, &item.Reason, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }

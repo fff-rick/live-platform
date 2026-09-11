@@ -1,3 +1,6 @@
+import {GiftRequestStore, isDefinitiveGiftError} from './gift-request.mjs';
+import {giftMessageID, rememberMessage} from './message-dedup.mjs';
+
 const app = document.getElementById('app');
 const toastRoot = document.getElementById('toast-root');
 
@@ -25,6 +28,8 @@ const state = {
   giftTimer: null,
   pendingGiftCount: 0,
   pendingGiftID: 0,
+  mutes: [],
+  bans: [],
   realtime: 'offline',
   currentRoute: location.pathname,
   seenEvents: new Set(),
@@ -49,6 +54,7 @@ function esc(value='') {
 function fmtNum(v=0){ v=Number(v)||0; if(v>=1000000)return (v/1000000).toFixed(1)+'M'; if(v>=10000)return (v/10000).toFixed(1)+'万'; if(v>=1000)return (v/1000).toFixed(1)+'k'; return String(v); }
 function fmtTime(v){ if(!v)return ''; const d=new Date(v); return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 function newKey(){ return crypto.randomUUID ? crypto.randomUUID() : `gift-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+const giftRequests = new GiftRequestStore(localStorage, newKey);
 function wsURL(){ const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'; const localCompose=(location.hostname==='localhost'||location.hostname==='127.0.0.1')&&location.port==='8080'; const host=localCompose?`${location.hostname}:8000`:location.host; return `${scheme}//${host}/connection/websocket`; }
 
 function toast(message,type='info'){
@@ -114,8 +120,8 @@ function header(){
 function homeTemplate(){
   const cards = state.rooms.length ? state.rooms.map((r,i)=>roomCard(r,i)).join('') : `<div class="empty" style="grid-column:1/-1"><strong>还没有正在直播的房间</strong>登录后点击「开播」创建你的第一个直播间。<div style="margin-top:18px"><button class="btn primary" id="empty-create">立即开播</button></div></div>`;
   return `<div class="shell">${header()}
-    <section class="hero"><div class="hero-card"><div class="hero-copy"><div class="eyebrow">REALTIME · HIGH CONCURRENCY</div><h1>高并发直播互动，<br>现在真的能用了。</h1><p>Go + Centrifugo + Redis + Kafka + MySQL。弹幕、点赞、礼物、钱包、在线人数与房主管理全部接入真实后端。</p><div class="hero-badges"><span class="badge">⚡ WebSocket 实时推送</span><span class="badge">🎁 事务礼物链路</span><span class="badge">🛡 Hot Room 自适应降级</span></div></div><div class="hero-orb"></div></div></section>
-    <main class="content"><div class="section-head"><div><div class="section-title"><span class="dot"></span><h2>正在直播</h2></div><div class="section-sub">实时读取后端 LIVING 房间与在线数据</div></div><button class="btn ghost small" id="refresh-rooms">↻ 刷新</button></div><div class="room-grid" id="room-grid">${cards}</div></main>
+    <section class="hero"><div class="hero-card"><div class="hero-copy"><h1>Live Platform</h1><p>To show your beatiful life!</p></div><div class="hero-orb"></div></div></section>
+    <main class="content"><div class="section-head"><div class="section-title"><span class="dot"></span><h2>正在直播</h2></div><button class="btn ghost small" id="refresh-rooms">↻ 刷新</button></div><div class="room-grid" id="room-grid">${cards}</div></main>
   </div>`;
 }
 function roomCard(r,i){
@@ -127,7 +133,7 @@ function roomTemplate(){
   if(!state.room) return `<div class="shell">${header()}<main class="content"><div class="empty"><strong>直播间加载中…</strong></div></main></div>`;
   const r=state.room; const isAnchor=state.user && Number(state.user.id)===Number(r.anchor_id); const living=r.status==='LIVING';
   return `<div class="shell">${header()}<main class="room-page">
-    <div class="room-topline"><div class="room-heading"><div class="anchor-avatar" style="width:42px;height:42px;font-size:16px">${esc((r.anchor_nickname||'主').slice(0,1))}</div><div><h1>${esc(r.title)}</h1><div class="sub">${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)} · 房间 ${r.room_id}</div></div></div><div>${living?'<span class="live-status"><i></i>直播中</span>':`<span class="status-pill ${r.status}">${r.status}</span>`}${isAnchor&&living?'<button class="btn danger small" id="stop-live" style="margin-left:10px">结束直播</button>':''}</div></div>
+    <div class="room-topline"><div class="room-heading"><div class="anchor-avatar" style="width:42px;height:42px;font-size:16px">${esc((r.anchor_nickname||'主').slice(0,1))}</div><div><h1>${esc(r.title)}</h1><div class="sub">${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)} · 房间 ${r.room_id}</div></div></div><div>${living?'<span class="live-status"><i></i>直播中</span>':`<span class="status-pill ${r.status}">${r.status}</span>`}${isAnchor?'<button class="btn ghost small" id="governance-btn" style="margin-left:10px">治理名单</button>':''}${isAnchor&&living?'<button class="btn danger small" id="stop-live" style="margin-left:10px">结束直播</button>':''}</div></div>
     <div class="room-layout">
       <section class="player"><div class="stream-scene"></div><div class="stream-grid"></div><div class="stream-center"><div class="cam">▣</div><strong>媒体流接入位</strong><span>当前项目实现直播互动层；接入 SRS / LiveKit / 云直播后在此播放媒体流</span><code>interaction channel: room:${r.room_id}:stream</code></div><div class="player-top"><span class="player-tag live">LIVE</span><span class="player-tag" id="traffic-tag">互动链路 · ${state.realtime==='online'?'已连接':'连接中'}</span></div><div class="danmaku-layer" id="danmaku-layer"></div><div class="player-controls"><span>◉ ${fmtNum(state.stats.viewer_count)} 在线</span><span>♥ ${fmtNum(state.stats.like_count)} 点赞</span><span class="right">Centrifugo · WebSocket</span></div></section>
       <aside class="chat-panel"><div class="chat-head"><strong>直播互动</strong><span class="chat-status" id="chat-status">${state.realtime==='online'?'● 实时':'○ 离线'}</span></div><div class="chat-list" id="chat-list">${chatHTML(isAnchor)}</div><div class="chat-compose"><form class="compose-box" id="chat-form"><input id="chat-input" maxlength="200" placeholder="${state.user?'发一条友善的弹幕吧':'登录后发送弹幕'}" ${!state.user||!living?'disabled':''}><button ${!state.user||!living?'disabled':''}>发送</button></form><div class="compose-hint"><span>Enter 发送 · 后端限流/敏感词校验</span><span>≤ 200 字</span></div></div></aside>
@@ -167,10 +173,17 @@ function walletDrawer(){
   const txs = state.txs.length ? state.txs.map(t=>`<div class="tx"><div><div class="desc">${esc(t.biz_type)} · ${esc(t.biz_id)}</div><div class="time">${fmtTime(t.created_at)} · 余额 ${fmtNum(t.balance_after)}</div></div><div class="amount ${t.amount<0?'neg':''}">${t.amount>0?'+':''}${fmtNum(t.amount)}</div></div>`).join('') : `<div style="color:#999;font-size:13px;padding:20px 0">暂无交易流水</div>`;
   return `<div class="drawer-backdrop" id="drawer-backdrop"><aside class="drawer"><div class="drawer-head"><h3>我的钱包</h3><button class="close" id="modal-close">×</button></div><div class="balance-card"><small>虚拟币余额</small><strong>◈ ${state.wallet?fmtNum(state.wallet.balance):'--'}</strong><button class="btn small" id="dev-credit">Demo +10,000</button></div><div class="tx-title">最近流水</div>${txs}</aside></div>`;
 }
+function governanceDrawer(){
+  const muteRows=state.mutes.length?state.mutes.map(item=>`<div class="tx"><div><div class="desc">${esc(item.nickname||`用户 #${item.user_id}`)} · 禁言</div><div class="time">${item.muted_until?`剩余 ${remainingMute(item.muted_until)}`:'永久'} · ${esc(item.reason||'无原因')}</div></div><button class="btn small" data-unmute="${item.user_id}">解除禁言</button></div>`).join(''):'<div class="time">暂无生效中的禁言</div>';
+  const banRows=state.bans.length?state.bans.map(item=>`<div class="tx"><div><div class="desc">${esc(item.nickname||`用户 #${item.user_id}`)} · 封禁</div><div class="time">${esc(item.reason||'无原因')}</div></div><div><button class="btn small" data-edit-ban="${item.user_id}" data-reason="${esc(item.reason||'')}">修改原因</button> <button class="btn danger small" data-unban="${item.user_id}">解除封禁</button></div></div>`).join(''):'<div class="time">暂无封禁用户</div>';
+  return `<div class="drawer-backdrop" id="drawer-backdrop"><aside class="drawer"><div class="drawer-head"><h3>房间治理名单</h3><button class="close" id="modal-close">×</button></div><div class="tx-title">禁言用户</div>${muteRows}<div class="tx-title" style="margin-top:24px">封禁用户</div>${banRows}</aside></div>`;
+}
+function remainingMute(value){const seconds=Math.max(0,Math.ceil((new Date(value).getTime()-Date.now())/1000));if(seconds>=86400)return `${Math.ceil(seconds/86400)} 天`;if(seconds>=3600)return `${Math.ceil(seconds/3600)} 小时`;if(seconds>=60)return `${Math.ceil(seconds/60)} 分钟`;return `${seconds} 秒`;}
 function renderOverlay(){
   document.querySelectorAll('.modal-backdrop,.drawer-backdrop').forEach(x=>x.remove());
   if(state.modal==='auth') document.body.insertAdjacentHTML('beforeend',authModal());
   if(state.modal==='wallet') document.body.insertAdjacentHTML('beforeend',walletDrawer());
+  if(state.modal==='governance') document.body.insertAdjacentHTML('beforeend',governanceDrawer());
   bindOverlay();
 }
 
@@ -220,6 +233,9 @@ function bindOverlay(){
   document.getElementById('modal-close')?.addEventListener('click',closeModal);
   document.getElementById('modal-backdrop')?.addEventListener('click',e=>{ if(e.target.id==='modal-backdrop') closeModal(); });
   document.getElementById('drawer-backdrop')?.addEventListener('click',e=>{ if(e.target.id==='drawer-backdrop') closeModal(); });
+  document.querySelectorAll('[data-unmute]').forEach(button=>button.addEventListener('click',()=>removeModeration('mutes',Number(button.dataset.unmute))));
+  document.querySelectorAll('[data-unban]').forEach(button=>button.addEventListener('click',()=>removeModeration('bans',Number(button.dataset.unban))));
+  document.querySelectorAll('[data-edit-ban]').forEach(button=>button.addEventListener('click',()=>editBanReason(Number(button.dataset.editBan),button.dataset.reason||'')));
   document.querySelectorAll('[data-auth-tab]').forEach(b=>b.addEventListener('click',()=>{state.authMode=b.dataset.authTab;renderOverlay();}));
   document.getElementById('auth-form')?.addEventListener('submit',handleAuth);
   document.getElementById('dev-credit')?.addEventListener('click',async()=>{try{state.wallet=await api('/api/v1/wallet/dev-credit',{method:'POST',body:JSON.stringify({amount:10000})}); await loadTransactions(); renderOverlay(); updateWalletUI(); toast('Demo 余额已增加','success');}catch(err){toast(err.message,'error')}});
@@ -253,8 +269,7 @@ async function loadRoom(id){
 }
 function loadHistory(items){
   for(const evt of items){
-    if(!evt?.message_id || state.seenMessages.has(evt.message_id)) continue;
-    state.seenMessages.add(evt.message_id);
+    if(!rememberMessage(state.seenMessages,evt?.message_id)) continue;
     if(evt.type==='gift') state.messages.push({kind:'gift',...evt});
     else state.messages.push({kind:'danmaku',...evt});
   }
@@ -295,6 +310,28 @@ async function loadTransactions(){ if(!state.user)return; try{const x=await api(
 async function openWallet(){ if(!state.user)return openAuth('login'); await Promise.all([loadWallet(),loadTransactions()]); state.modal='wallet';renderOverlay(); }
 function updateWalletUI(){ const a=document.getElementById('wallet-mini');if(a&&state.wallet)a.textContent=fmtNum(state.wallet.balance); }
 
+async function openGovernance(){
+  if(!state.room)return;
+  try{
+    const roomID=state.room.room_id;
+    const [mutes,bans]=await Promise.all([api(`/api/v1/rooms/${roomID}/mutes`),api(`/api/v1/rooms/${roomID}/bans`)]);
+    state.mutes=mutes.items||[];state.bans=bans.items||[];state.modal='governance';renderOverlay();
+  }catch(error){toast(`治理名单加载失败：${error.message}`,'error')}
+}
+async function removeModeration(kind,userID){
+  if(!state.room)return;
+  try{await api(`/api/v1/rooms/${state.room.room_id}/${kind}/${userID}`,{method:'DELETE'});toast(kind==='mutes'?'已解除禁言':'已解除封禁','success');await openGovernance();}
+  catch(error){toast(error.message,'error')}
+}
+async function editBanReason(userID,currentReason){
+  if(!state.room)return;
+  const reason=prompt('修改封禁原因（最多 255 个字符）',currentReason);
+  if(reason===null)return;
+  if(Array.from(reason.trim()).length>255){toast('封禁原因不能超过 255 个字符','error');return}
+  try{await api(`/api/v1/rooms/${state.room.room_id}/bans`,{method:'POST',body:JSON.stringify({user_id:userID,reason:reason.trim()})});toast('封禁原因已更新','success');await openGovernance();}
+  catch(error){toast(error.message,'error')}
+}
+
 function bindRoom(){
   const id=Number(state.room?.room_id); if(!id)return;
   document.getElementById('chat-form')?.addEventListener('submit',async e=>{e.preventDefault();const input=document.getElementById('chat-input');const content=input.value.trim();if(!content)return;input.value='';try{const evt=await api(`/api/v1/rooms/${id}/danmaku`,{method:'POST',body:JSON.stringify({content})}); addDanmaku(evt,true); if(!evt.broadcasted) toast('热点保护中：该弹幕仅本地可见');}catch(err){toast(err.message,'error')}});
@@ -304,6 +341,7 @@ function bindRoom(){
   document.getElementById('gift-send')?.addEventListener('click',sendGift);
   document.getElementById('gift-combo')?.addEventListener('click',queueGiftCombo);
   document.getElementById('open-wallet')?.addEventListener('click',openWallet);
+  document.getElementById('governance-btn')?.addEventListener('click',openGovernance);
   document.getElementById('stop-live')?.addEventListener('click',async()=>{if(!confirm('确定结束本场直播？'))return;try{state.room=await api(`/api/v1/rooms/${id}/stop`,{method:'POST'});disconnectRealtime();toast('直播已结束','success');renderApp();}catch(err){toast(err.message,'error')}});
   document.getElementById('chat-list')?.addEventListener('click',async e=>{
     const mute=e.target.closest('[data-mute]'),ban=e.target.closest('[data-ban]');
@@ -356,13 +394,18 @@ function handlePublication(data){
   if(data.type==='stats') updateStats(data.data||{});
   if(data.type==='danmaku') addDanmaku(data.data||{},false);
   if(data.type==='gift') { addGiftEvent(data.data||{}); loadTopViewers(data.room_id||state.room?.room_id); }
+  if(data.type==='room_muted'&&Number(data.room_id)===Number(state.room?.room_id)) toast(`你已被禁言${data.data?.reason?`：${data.data.reason}`:''}`,'error');
+  if(data.type==='room_banned'&&Number(data.room_id)===Number(state.room?.room_id)) { toast(`你已被移出直播间${data.data?.reason?`：${data.data.reason}`:''}`,'error'); disconnectRealtime(); setTimeout(()=>navigate('/'),800); }
 }
 function addDanmaku(evt,mine=false){
-  if(!evt?.message_id)return; if(state.seenMessages.has(evt.message_id))return; state.seenMessages.add(evt.message_id);
+  if(!rememberMessage(state.seenMessages,evt?.message_id))return;
   state.messages.push({kind:'danmaku',...evt}); trimMessages(); renderChat(); flyText(evt.content,mine?'mine':'');
 }
 function addGiftEvent(evt){
-  state.messages.push({kind:'gift',...evt,nickname:`用户 #${evt.user_id}`});trimMessages();renderChat();flyText(`🎁 ${evt.gift_name} × ${evt.count}`,'gift');
+  const messageID=giftMessageID(evt);
+  // 历史与实时礼物共享 message_id；event_id 只在 handlePublication 中过滤重复投递。
+  if(!rememberMessage(state.seenMessages,messageID))return;
+  state.messages.push({kind:'gift',...evt,message_id:messageID,nickname:`用户 #${evt.user_id}`});trimMessages();renderChat();flyText(`🎁 ${evt.gift_name} × ${evt.count}`,'gift');
 }
 function trimMessages(){if(state.messages.length>300)state.messages.splice(0,state.messages.length-300)}
 function renderChat(){ const el=document.getElementById('chat-list'); if(!el)return; const isAnchor=state.user&&state.room&&Number(state.user.id)===Number(state.room.anchor_id);el.innerHTML=chatHTML(isAnchor);el.scrollTop=el.scrollHeight; }
@@ -382,7 +425,7 @@ async function flushLikes(){
 }
 async function sendGift(){
   if(!state.selectedGift||!state.room)return; const count=Math.max(1,Math.min(100,Number(document.getElementById('gift-count')?.value||1)));
-  try{await api(`/api/v1/rooms/${state.room.room_id}/gifts`,{method:'POST',headers:{'Idempotency-Key':newKey()},body:JSON.stringify({gift_id:Number(state.selectedGift),count})});await Promise.all([loadWallet(),loadTopViewers(state.room.room_id)]);toast(`礼物 ×${count} 已送出`,'success')}catch(err){toast(err.message,'error')}
+  try{await submitGift(state.room.room_id,Number(state.selectedGift),count);await Promise.all([loadWallet(),loadTopViewers(state.room.room_id)]);toast(`礼物 ×${count} 已送出`,'success')}catch(err){showGiftError(err)}
 }
 function queueGiftCombo(){
   const id=Number(state.selectedGift);if(!id)return;if(state.pendingGiftCount&&state.pendingGiftID!==id)flushGiftCombo();state.pendingGiftID=id;state.pendingGiftCount++;updateGiftPending();if(state.pendingGiftCount>=100){flushGiftCombo();return}if(!state.giftTimer)state.giftTimer=setTimeout(flushGiftCombo,300);
@@ -390,7 +433,27 @@ function queueGiftCombo(){
 function updateGiftPending(){const el=document.getElementById('gift-pending');if(el)el.textContent=state.pendingGiftCount?`待合并 ×${state.pendingGiftCount}`:''}
 async function flushGiftCombo(){
   if(state.giftTimer){clearTimeout(state.giftTimer);state.giftTimer=null}const count=state.pendingGiftCount,id=state.pendingGiftID;state.pendingGiftCount=0;state.pendingGiftID=0;updateGiftPending();if(!count||!state.room)return;
-  try{await api(`/api/v1/rooms/${state.room.room_id}/gifts`,{method:'POST',headers:{'Idempotency-Key':newKey()},body:JSON.stringify({gift_id:id,count})});await Promise.all([loadWallet(),loadTopViewers(state.room.room_id)]);toast(`连击礼物 ×${count} 已合并提交`,'success')}catch(err){toast(err.message,'error')}
+  try{await submitGift(state.room.room_id,id,count);await Promise.all([loadWallet(),loadTopViewers(state.room.room_id)]);toast(`连击礼物 ×${count} 已合并提交`,'success')}catch(err){showGiftError(err)}
+}
+
+async function submitGift(roomID,giftID,count){
+  const userID=Number(state.user?.id);
+  const intent={roomID:Number(roomID),giftID:Number(giftID),count:Number(count)};
+  const pending=giftRequests.getOrCreate(userID,intent);
+  try{
+    const result=await api(`/api/v1/rooms/${intent.roomID}/gifts`,{method:'POST',headers:{'Idempotency-Key':pending.requestID},body:JSON.stringify({gift_id:intent.giftID,count:intent.count})});
+    giftRequests.complete(userID,intent,pending.requestID);
+    return result;
+  }catch(error){
+    if(isDefinitiveGiftError(error))giftRequests.complete(userID,intent,pending.requestID);
+    throw error;
+  }
+}
+
+function showGiftError(error){
+  if(error?.code==='GIFT_REQUEST_STORAGE'){toast(error.message,'error');return}
+  if(isDefinitiveGiftError(error)){toast(error.message,'error');return}
+  toast('送礼结果尚未确认，再次提交相同礼物将安全重试','error');
 }
 
 window.addEventListener('beforeunload',()=>{leaveCurrentRoom();disconnectRealtime();});

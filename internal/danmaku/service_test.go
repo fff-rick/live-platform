@@ -11,16 +11,22 @@ import (
 )
 
 type fakeRooms struct {
-	muted  bool
-	banned bool
-	status room.Status
+	muted       bool
+	banned      bool
+	status      room.Status
+	accessCalls *int
 }
 
-func (f fakeRooms) Get(context.Context, int64) (room.Room, error) {
-	return room.Room{ID: 1, Status: f.status}, nil
+func (f fakeRooms) GetRoomAccess(context.Context, int64, int64) (room.RoomAccess, error) {
+	if f.accessCalls != nil {
+		(*f.accessCalls)++
+	}
+	return room.RoomAccess{
+		Room:   room.Room{ID: 1, Status: f.status},
+		Banned: f.banned,
+		Muted:  f.muted,
+	}, nil
 }
-func (f fakeRooms) IsMuted(context.Context, int64, int64) (bool, error)  { return f.muted, nil }
-func (f fakeRooms) IsBanned(context.Context, int64, int64) (bool, error) { return f.banned, nil }
 
 type fakeUsers struct{}
 
@@ -43,7 +49,8 @@ func (f *fakePublisher) Publish(context.Context, string, any) error { f.count++;
 
 func TestSendDanmakuSuccess(t *testing.T) {
 	p := &fakePublisher{}
-	s := NewService(fakeRooms{status: room.StatusLiving}, fakeUsers{}, fakeLimiter{allowed: true}, NewSensitiveFilter([]string{"bad"}), p, NoopProducer{}, 5, 10*time.Second)
+	accessCalls := 0
+	s := NewService(fakeRooms{status: room.StatusLiving, accessCalls: &accessCalls}, fakeUsers{}, fakeLimiter{allowed: true}, NewSensitiveFilter([]string{"bad"}), p, NoopProducer{}, 5, 10*time.Second)
 	e, err := s.Send(context.Background(), 1, 7, "hello")
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +60,9 @@ func TestSendDanmakuSuccess(t *testing.T) {
 	}
 	if p.count != 1 {
 		t.Fatalf("publish count=%d", p.count)
+	}
+	if accessCalls != 1 {
+		t.Fatalf("room access calls=%d", accessCalls)
 	}
 }
 

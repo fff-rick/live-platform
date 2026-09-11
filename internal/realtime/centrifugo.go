@@ -25,11 +25,12 @@ type PublishMetrics interface {
 }
 
 type Centrifugo struct {
-	endpoint string
-	health   string
-	apiKey   string
-	client   *http.Client
-	metrics  PublishMetrics
+	endpoint    string
+	unsubscribe string
+	health      string
+	apiKey      string
+	client      *http.Client
+	metrics     PublishMetrics
 }
 
 func NewCentrifugo(apiURL, apiKey string, metrics ...PublishMetrics) *Centrifugo {
@@ -40,12 +41,50 @@ func NewCentrifugo(apiURL, apiKey string, metrics ...PublishMetrics) *Centrifugo
 		m = metrics[0]
 	}
 	return &Centrifugo{
-		endpoint: apiBase + "/publish",
-		health:   base + "/health",
-		apiKey:   apiKey,
-		client:   &http.Client{Timeout: 3 * time.Second},
-		metrics:  m,
+		endpoint:    apiBase + "/publish",
+		unsubscribe: apiBase + "/unsubscribe",
+		health:      base + "/health",
+		apiKey:      apiKey,
+		client:      &http.Client{Timeout: 3 * time.Second},
+		metrics:     m,
 	}
+}
+
+type unsubscribeRequest struct {
+	User    string `json:"user"`
+	Channel string `json:"channel"`
+}
+
+// Unsubscribe 立即撤销用户在指定频道上的现有服务端订阅状态。
+func (c *Centrifugo) Unsubscribe(ctx context.Context, userID, channel string) error {
+	body, err := json.Marshal(unsubscribeRequest{User: userID, Channel: channel})
+	if err != nil {
+		return fmt.Errorf("marshal unsubscribe: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.unsubscribe, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("new unsubscribe request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.apiKey)
+	req.Header.Set("X-Centrifugo-Error-Mode", "transport")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("centrifugo unsubscribe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read centrifugo unsubscribe response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("centrifugo unsubscribe status=%d body=%s", resp.StatusCode, string(raw))
+	}
+	var out publishResponse
+	if len(raw) > 0 && json.Unmarshal(raw, &out) == nil && out.Error != nil {
+		return fmt.Errorf("centrifugo error %d: %s", out.Error.Code, out.Error.Message)
+	}
+	return nil
 }
 
 type publishRequest struct {

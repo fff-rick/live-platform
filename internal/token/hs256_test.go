@@ -33,7 +33,7 @@ func TestConnectionTokenHasSubject(t *testing.T) {
 
 func TestSubscriptionToken(t *testing.T) {
 	i := NewIssuer("secret", time.Hour)
-	tok, _, err := i.SubscriptionToken("42", "room:1:stream", 5*time.Minute)
+	tok, expiresAt, err := i.SubscriptionToken("42", "room:1:stream", 5*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestSubscriptionToken(t *testing.T) {
 	if claims["sub"] != "42" || claims["channel"] != "room:1:stream" {
 		t.Fatalf("claims=%v", claims)
 	}
-	if claims["expire_at"] != float64(0) {
+	if claims["expire_at"] != float64(expiresAt.Unix()) {
 		t.Fatalf("expire_at=%v", claims["expire_at"])
 	}
 }

@@ -14,6 +14,30 @@ scrape_configs:
     static_configs:
       - targets: ["live-worker:9090"]
 
+  - job_name: live-commerce
+    static_configs:
+      - targets: ["live-commerce:8081"]
+
+  - job_name: live-interaction
+    static_configs:
+      - targets: ["live-interaction:8082"]
+
+  - job_name: live-identity-room
+    static_configs:
+      - targets: ["live-identity-room:8083"]
+
   - job_name: centrifugo
     static_configs:
       - targets: ["centrifugo:8000"]
+
+  - job_name: mysql
+    static_configs:
+      - targets: ["mysql-exporter:9104"]
+
+  - job_name: redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]

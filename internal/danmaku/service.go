@@ -28,9 +28,7 @@ type EventProducer interface {
 }
 
 type RoomService interface {
-	Get(context.Context, int64) (room.Room, error)
-	IsMuted(context.Context, int64, int64) (bool, error)
-	IsBanned(context.Context, int64, int64) (bool, error)
+	GetRoomAccess(context.Context, int64, int64) (room.RoomAccess, error)
 }
 
 type Publisher interface {
@@ -89,25 +87,17 @@ func (s *Service) Send(ctx context.Context, roomID, userID int64, content string
 	if content == "" || len([]rune(content)) > 200 {
 		return Event{}, ErrInvalidContent
 	}
-	v, err := s.rooms.Get(ctx, roomID)
+	access, err := s.rooms.GetRoomAccess(ctx, roomID, userID)
 	if err != nil {
 		return Event{}, err
 	}
-	if v.Status != room.StatusLiving {
+	if access.Room.Status != room.StatusLiving {
 		return Event{}, room.ErrNotLiving
 	}
-	banned, err := s.rooms.IsBanned(ctx, roomID, userID)
-	if err != nil {
-		return Event{}, err
-	}
-	if banned {
+	if access.Banned {
 		return Event{}, room.ErrBanned
 	}
-	muted, err := s.rooms.IsMuted(ctx, roomID, userID)
-	if err != nil {
-		return Event{}, err
-	}
-	if muted {
+	if access.Muted {
 		return Event{}, ErrMuted
 	}
 	allowed, err := s.limiter.Allow(ctx, "live:limit:danmaku:user:"+itoa(userID), s.userRateLimit, s.userRateWindow)

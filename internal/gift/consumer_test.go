@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/example/live-platform/internal/mq"
+	"github.com/example/live-platform/internal/realtime"
 )
 
 type fakeDedup struct {
@@ -56,6 +57,21 @@ func TestGiftConsumerPublishesAndMarksDone(t *testing.T) {
 	}
 	if p.calls != 1 || d.doneCalls != 1 || d.failCalls != 0 {
 		t.Fatalf("publish=%d done=%d fail=%d", p.calls, d.doneCalls, d.failCalls)
+	}
+	wire, ok := p.data.(realtime.Event)
+	if !ok {
+		t.Fatalf("published type = %T, want realtime.Event", p.data)
+	}
+	raw, ok := wire.Data.([]byte)
+	if !ok {
+		t.Fatalf("published data type = %T, want []byte", wire.Data)
+	}
+	var payload realtimeGiftPayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.MessageID != "gift:G1" || wire.EventID != "event-1" {
+		t.Fatalf("message_id=%q event_id=%q", payload.MessageID, wire.EventID)
 	}
 }
 

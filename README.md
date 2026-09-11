@@ -61,8 +61,13 @@ make compose-up
 | --- | --- |
 | 用户界面/API | http://localhost:8080/ |
 | Centrifugo | http://localhost:8000/ |
-| Prometheus | http://localhost:9091/ |
+| Worker 健康检查/指标 | http://localhost:19090/ |
+| Prometheus | http://localhost:19091/ |
 | Grafana | http://localhost:3000/ |
+
+Kafka 默认发布到宿主机 `localhost:19092`。可分别通过 `KAFKA_HOST_PORT`、`WORKER_HOST_PORT`、`PROMETHEUS_HOST_PORT` 覆盖这三个宿主机端口；容器间通信端口不受影响。
+
+Grafana 的 **Live Platform · 综合监控总览** 看板按服务状态、请求性能、直播互动、MySQL、Redis、Kafka/Outbox 和进程资源分区。Prometheus 会抓取全部应用服务以及 Centrifugo、MySQL Exporter、Redis Exporter、Kafka Exporter；本地 MySQL Exporter 使用开发环境凭据，生产部署应改为具备最小监控权限的独立账号。
 
 在界面中注册用户，创建并开播一个直播间；其他用户登录后进入同一房间，即可测试弹幕、点赞、礼物和在线观众。
 

@@ -1,0 +1,328 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "注释与告警", "type": "dashboard"}]},
+  "description": "Live Platform 全链路监控：服务状态、HTTP、实时互动、MySQL、Redis、Kafka、Outbox 与 Go 进程资源。",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {"id": 1, "type": "row", "title": "服务状态", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "panels": []},
+    {
+      "id": 2, "type": "stat", "title": "正常采集目标", "description": "Prometheus 当前能够成功抓取的 Live Platform 组件数量。预期共 9 个。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "targets": [{"refId": "A", "expr": "sum(up{job=~\"live-.*|centrifugo|mysql|redis|kafka\"})", "legendFormat": "正常目标"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 9, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 8}, {"color": "green", "value": 9}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 3, "type": "stat", "title": "HTTP 请求速率", "description": "所选应用服务每秒处理的 HTTP 请求总量。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "targets": [{"refId": "A", "expr": "sum(rate(live_http_requests_total{service=~\"$service\"}[$__rate_interval]))", "legendFormat": "请求速率"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 1000}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 4, "type": "stat", "title": "HTTP 五分钟错误率", "description": "所选服务最近五分钟 5xx 请求占全部请求的比例。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "targets": [{"refId": "A", "expr": "100 * sum(rate(live_http_requests_total{service=~\"$service\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(live_http_requests_total{service=~\"$service\"}[5m])), 0.001)", "legendFormat": "错误率"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "decimals": 2, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 5, "type": "stat", "title": "实时连接用户", "description": "Centrifugo 当前保持的 WebSocket 客户端连接数。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [{"refId": "A", "expr": "sum(centrifugo_node_num_clients)", "legendFormat": "连接用户"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50000}, {"color": "red", "value": 100000}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+
+    {"id": 6, "type": "row", "title": "请求与性能", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}, "panels": []},
+    {
+      "id": 7, "type": "timeseries", "title": "各服务请求速率", "description": "按微服务拆分的 HTTP 每秒请求量。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [{"refId": "A", "expr": "sum by (service) (rate(live_http_requests_total{service=~\"$service\"}[$__rate_interval]))", "legendFormat": "{{service}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "各服务请求延迟", "description": "HTTP 请求延迟的 P95 与 P99，便于区分普遍变慢和尾延迟。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, service) (rate(live_http_request_duration_seconds_bucket{service=~\"$service\"}[$__rate_interval])))", "legendFormat": "{{service}} P95"},
+        {"refId": "B", "expr": "histogram_quantile(0.99, sum by (le, service) (rate(live_http_request_duration_seconds_bucket{service=~\"$service\"}[$__rate_interval])))", "legendFormat": "{{service}} P99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0, "color": {"mode": "palette-classic"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.25}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "HTTP 错误速率", "description": "按服务和状态码展示 4xx/5xx 错误请求。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [{"refId": "A", "expr": "sum by (service, status) (rate(live_http_requests_total{service=~\"$service\",status=~\"4..|5..\"}[$__rate_interval]))", "legendFormat": "{{service}} · {{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/.*5../"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 10, "type": "table", "title": "最慢接口排名", "description": "按接口路由列出最近窗口的 P99 延迟。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [{"refId": "A", "expr": "topk(10, histogram_quantile(0.99, sum by (le, service, route) (rate(live_http_request_duration_seconds_bucket{service=~\"$service\"}[$__rate_interval]))))", "format": "table", "instant": true, "legendFormat": "{{service}} {{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 3, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.25}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"cellHeight": "sm", "showHeader": true, "sortBy": [{"desc": true, "displayName": "Value"}]}
+    },
+
+    {"id": 11, "type": "row", "title": "直播互动业务", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}, "panels": []},
+    {
+      "id": 12, "type": "timeseries", "title": "弹幕处理结果", "description": "弹幕成功、拒绝、失败等结果的每秒速率。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum by (result) (rate(live_danmaku_total[$__rate_interval]))", "legendFormat": "{{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "点赞接收速率", "description": "服务端成功接受的点赞数量变化。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum(rate(live_likes_total[$__rate_interval]))", "legendFormat": "点赞/秒"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "continuous-purples"}, "min": 0}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}}
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "礼物订单结果", "description": "礼物下单成功、幂等重放、限流和失败的每秒速率。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 23},
+      "targets": [{"refId": "A", "expr": "sum by (result) (rate(live_gift_orders_total[$__rate_interval]))", "legendFormat": "{{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "实时推送与统计广播", "description": "应用向 Centrifugo 发布实时事件和房间统计的结果。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
+      "targets": [
+        {"refId": "A", "expr": "sum by (result) (rate(live_realtime_publish_total[$__rate_interval]))", "legendFormat": "实时推送 · {{result}}"},
+        {"refId": "B", "expr": "sum by (result) (rate(live_stats_broadcast_total[$__rate_interval]))", "legendFormat": "统计广播 · {{result}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "实时连接规模", "description": "Centrifugo 当前客户端、订阅和频道数量。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
+      "targets": [
+        {"refId": "A", "expr": "sum(centrifugo_node_num_clients)", "legendFormat": "客户端"},
+        {"refId": "B", "expr": "sum(centrifugo_node_num_subscriptions)", "legendFormat": "订阅"},
+        {"refId": "C", "expr": "sum(centrifugo_node_num_channels)", "legendFormat": "频道"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 17, "type": "timeseries", "title": "热点房间降级决策", "description": "NORMAL、HOT、PROTECT 模式下广播或采样决策的速率。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 39},
+      "targets": [{"refId": "A", "expr": "sum by (mode, action) (rate(live_danmaku_degradation_total[$__rate_interval]))", "legendFormat": "{{mode}} · {{action}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 18, "type": "timeseries", "title": "自适应采样率", "description": "弹幕热点保护策略实际采用的广播采样比例。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 39},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.50, sum by (le, mode) (rate(live_danmaku_sample_rate_bucket[$__rate_interval])))", "legendFormat": "{{mode}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1, "color": {"mode": "palette-classic"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.2}, {"color": "green", "value": 0.8}]}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+
+    {"id": 19, "type": "row", "title": "MySQL 数据库", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 47}, "panels": []},
+    {
+      "id": 20, "type": "gauge", "title": "MySQL 连接使用率", "description": "MySQL 当前连接数占最大连接数的比例。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 6, "x": 0, "y": 48},
+      "targets": [{"refId": "A", "expr": "100 * mysql_global_status_threads_connected / mysql_global_variables_max_connections", "legendFormat": "连接使用率"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "options": {"minVizHeight": 75, "minVizWidth": 75, "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true, "sizing": "auto"}
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "MySQL 查询与慢查询", "description": "数据库每秒查询数与慢查询数。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 9, "x": 6, "y": 48},
+      "targets": [
+        {"refId": "A", "expr": "rate(mysql_global_status_questions[$__rate_interval])", "legendFormat": "查询/秒"},
+        {"refId": "B", "expr": "rate(mysql_global_status_slow_queries[$__rate_interval])", "legendFormat": "慢查询/秒"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byName", "options": "慢查询/秒"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 22, "type": "gauge", "title": "InnoDB 缓冲池命中率", "description": "缓冲池逻辑读取中未触发磁盘读取的比例。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 7, "w": 9, "x": 15, "y": 48},
+      "targets": [{"refId": "A", "expr": "100 * (1 - rate(mysql_global_status_innodb_buffer_pool_reads[5m]) / clamp_min(rate(mysql_global_status_innodb_buffer_pool_read_requests[5m]), 0.001))", "legendFormat": "命中率"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 95}, {"color": "green", "value": 99}]}}, "overrides": []},
+      "options": {"minVizHeight": 75, "minVizWidth": 75, "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true, "sizing": "auto"}
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "应用数据库连接池", "description": "各应用进程 MySQL 连接池的使用中、空闲和最大连接数。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 55},
+      "targets": [
+        {"refId": "A", "expr": "live_db_pool_in_use_connections", "legendFormat": "{{service}} 使用中"},
+        {"refId": "B", "expr": "live_db_pool_idle_connections", "legendFormat": "{{service}} 空闲"},
+        {"refId": "C", "expr": "live_db_pool_max_open_connections", "legendFormat": "{{service}} 上限"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 24, "type": "timeseries", "title": "数据库连接池等待", "description": "连接池耗尽导致的等待速率和等待耗时。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 55},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service) (rate(live_db_pool_wait_total[$__rate_interval]))", "legendFormat": "{{service}} 等待次数/秒"},
+        {"refId": "B", "expr": "sum by (service) (rate(live_db_pool_wait_duration_seconds_total[$__rate_interval]))", "legendFormat": "{{service}} 等待秒数/秒"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+
+    {"id": 25, "type": "row", "title": "Redis 缓存", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 63}, "panels": []},
+    {
+      "id": 26, "type": "timeseries", "title": "Redis 内存使用", "description": "Redis 当前已使用内存与配置的最大内存。最大内存为 0 表示未设置限制。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 64},
+      "targets": [
+        {"refId": "A", "expr": "redis_memory_used_bytes", "legendFormat": "已使用"},
+        {"refId": "B", "expr": "redis_memory_max_bytes", "legendFormat": "最大内存"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 27, "type": "timeseries", "title": "Redis 客户端与阻塞", "description": "Redis 当前连接客户端数和阻塞客户端数。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 64},
+      "targets": [
+        {"refId": "A", "expr": "redis_connected_clients", "legendFormat": "已连接客户端"},
+        {"refId": "B", "expr": "redis_blocked_clients", "legendFormat": "阻塞客户端"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byName", "options": "阻塞客户端"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 28, "type": "timeseries", "title": "Redis 命令吞吐与命中率", "description": "Redis 每秒处理命令数及最近五分钟缓存命中率。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 72},
+      "targets": [
+        {"refId": "A", "expr": "rate(redis_commands_processed_total[$__rate_interval])", "legendFormat": "命令/秒"},
+        {"refId": "B", "expr": "100 * rate(redis_keyspace_hits_total[5m]) / clamp_min(rate(redis_keyspace_hits_total[5m]) + rate(redis_keyspace_misses_total[5m]), 0.001)", "legendFormat": "命中率"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byName", "options": "命中率"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisSoftMax", "value": 100}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 29, "type": "timeseries", "title": "Redis 异常事件", "description": "Key 淘汰和连接拒绝事件；正常情况下应长期为零。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 72},
+      "targets": [
+        {"refId": "A", "expr": "rate(redis_evicted_keys_total[$__rate_interval])", "legendFormat": "淘汰 Key/秒"},
+        {"refId": "B", "expr": "rate(redis_rejected_connections_total[$__rate_interval])", "legendFormat": "拒绝连接/秒"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "continuous-RdYlGr"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.001}]}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+
+    {"id": 30, "type": "row", "title": "Kafka 与 Outbox", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 80}, "panels": []},
+    {
+      "id": 31, "type": "stat", "title": "Kafka Broker 数量", "description": "Kafka Exporter 当前发现的 Broker 数量；本地单节点环境预期为 1。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 81},
+      "targets": [{"refId": "A", "expr": "kafka_brokers", "legendFormat": "Broker"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 32, "type": "stat", "title": "Outbox 待发布事件", "description": "事务已提交但尚未成功发送到 Kafka 的 Outbox 行数。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 81},
+      "targets": [{"refId": "A", "expr": "max(live_outbox_pending)", "legendFormat": "待发布"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 100}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 33, "type": "stat", "title": "最旧待发布事件年龄", "description": "最旧 Outbox 待发布事件已经等待的时长。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 81},
+      "targets": [{"refId": "A", "expr": "max(live_outbox_oldest_pending_age_seconds)", "legendFormat": "等待时长"}],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 30}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 34, "type": "stat", "title": "消费组最大积压", "description": "所有业务消费组和分区中的最大消息积压。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 81},
+      "targets": [{"refId": "A", "expr": "max(kafka_consumergroup_lag)", "legendFormat": "最大积压"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "id": 35, "type": "timeseries", "title": "Kafka 生产速率与延迟", "description": "应用写入 Kafka 的结果速率和 P99 投递延迟。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 86},
+      "targets": [
+        {"refId": "A", "expr": "sum by (topic, result) (rate(live_kafka_produce_total[$__rate_interval]))", "legendFormat": "{{topic}} · {{result}}"},
+        {"refId": "B", "expr": "histogram_quantile(0.99, sum by (le, topic) (rate(live_kafka_produce_duration_seconds_bucket[$__rate_interval])))", "legendFormat": "{{topic}} · P99"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/.*P99/"}, "properties": [{"id": "unit", "value": "s"}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 36, "type": "timeseries", "title": "Kafka 消费速率", "description": "按消费组、主题和结果展示消息处理速率。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 86},
+      "targets": [{"refId": "A", "expr": "sum by (group, topic, result) (rate(live_kafka_consume_total[$__rate_interval]))", "legendFormat": "{{group}} · {{topic}} · {{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 37, "type": "timeseries", "title": "Kafka 消费组积压", "description": "由 Kafka Exporter 从 Broker 读取的真实消费组分区积压。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 94},
+      "targets": [{"refId": "A", "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)", "legendFormat": "{{consumergroup}} · {{topic}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "color": {"mode": "palette-classic"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 38, "type": "timeseries", "title": "Outbox 发布与重试", "description": "Outbox 发布结果、重试速率和 Kafka 失败原因。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 94},
+      "targets": [
+        {"refId": "A", "expr": "sum by (result) (rate(live_outbox_publish_total[$__rate_interval]))", "legendFormat": "发布 · {{result}}"},
+        {"refId": "B", "expr": "sum(rate(live_outbox_retry_total[$__rate_interval]))", "legendFormat": "重试"},
+        {"refId": "C", "expr": "sum by (reason) (rate(live_kafka_produce_errors_total[$__rate_interval]))", "legendFormat": "Kafka 失败 · {{reason}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": [{"matcher": {"id": "byRegexp", "options": "/.*失败.*|.*重试.*/"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}]},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+
+    {"id": 39, "type": "row", "title": "进程资源", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 102}, "panels": []},
+    {
+      "id": 40, "type": "timeseries", "title": "应用进程 CPU 使用", "description": "各应用与 Centrifugo 进程消耗的 CPU 核数。1 表示持续占用一个 CPU 核。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 103},
+      "targets": [{"refId": "A", "expr": "sum by (job) (rate(process_cpu_seconds_total{job=~\"live-.*|centrifugo\"}[$__rate_interval]))", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "cores", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 41, "type": "timeseries", "title": "应用进程常驻内存", "description": "各应用与 Centrifugo 进程当前占用的物理内存。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 103},
+      "targets": [{"refId": "A", "expr": "sum by (job) (process_resident_memory_bytes{job=~\"live-.*|centrifugo\"})", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 42, "type": "timeseries", "title": "Go 协程数量", "description": "各 Go 服务当前 Goroutine 数量，持续增长可能表示泄漏或阻塞。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 103},
+      "targets": [{"refId": "A", "expr": "sum by (job) (go_goroutines{job=~\"live-.*\"})", "legendFormat": "{{job}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "color": {"mode": "palette-classic"}}, "overrides": []},
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "tags": ["live-platform", "综合监控", "中文"],
+  "templating": {
+    "list": [
+      {
+        "name": "service", "label": "HTTP 服务", "type": "query", "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(up{job=~\"live-api|live-commerce|live-interaction|live-identity-room\"}, job)", "query": {"query": "label_values(up{job=~\"live-api|live-commerce|live-interaction|live-identity-room\"}, job)", "refId": "StandardVariableQuery"},
+        "includeAll": true, "allValue": ".*", "multi": true, "refresh": 1, "sort": 1,
+        "current": {"selected": true, "text": ["全部"], "value": ["$__all"]}, "options": []
+      }
+    ]
+  },
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Live Platform · 综合监控总览",
+  "uid": "live-platform-overview",
+  "version": 1,
+  "weekStart": "monday"
+}

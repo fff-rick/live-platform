@@ -172,7 +172,8 @@ VALUES (?, ?, 'GIFT', ?, ?, ?, ?, NOW(3))`,
 		return Order{}, false, errors.New("gift outbox event configuration is required")
 	}
 	envelope, err := mq.NewEnvelopeContext(ctx, p.EventID, mq.EventTypeGiftSent, p.RoomID, map[string]any{
-		"order_no": p.OrderNo, "user_id": p.UserID, "anchor_id": p.AnchorID, "gift_id": p.GiftID,
+		// message_id 是跨历史接口与 WebSocket 的业务去重键；event_id 仍用于 Outbox/Kafka 投递去重。
+		"message_id": messageID(p.OrderNo), "order_no": p.OrderNo, "user_id": p.UserID, "anchor_id": p.AnchorID, "gift_id": p.GiftID,
 		"gift_name": g.Name, "count": p.Count, "unit_price": g.Price, "total_amount": total,
 	})
 	if err != nil {
