@@ -43,23 +43,17 @@ func (c *Client) Get(ctx context.Context, id int64) (room.Room, error) {
 	e := c.call(ctx, "GET", fmt.Sprintf("/internal/v1/rooms/%d", id), &v)
 	return v, e
 }
-func (c *Client) access(ctx context.Context, r, u int64) (struct {
-	Banned bool `json:"banned"`
-	Muted  bool `json:"muted"`
-}, error) {
-	var v struct {
-		Banned bool `json:"banned"`
-		Muted  bool `json:"muted"`
-	}
+func (c *Client) GetRoomAccess(ctx context.Context, r, u int64) (room.RoomAccess, error) {
+	var v room.RoomAccess
 	e := c.call(ctx, "GET", fmt.Sprintf("/internal/v1/rooms/%d/access/%d", r, u), &v)
 	return v, e
 }
 func (c *Client) IsBanned(ctx context.Context, r, u int64) (bool, error) {
-	v, e := c.access(ctx, r, u)
+	v, e := c.GetRoomAccess(ctx, r, u)
 	return v.Banned, e
 }
 func (c *Client) IsMuted(ctx context.Context, r, u int64) (bool, error) {
-	v, e := c.access(ctx, r, u)
+	v, e := c.GetRoomAccess(ctx, r, u)
 	return v.Muted, e
 }
 func (c *Client) Join(ctx context.Context, r, u int64) (room.Room, error) {
@@ -88,7 +82,13 @@ func (c *Client) Mute(context.Context, int64, int64, int64, time.Duration, strin
 	return fmt.Errorf("unsupported")
 }
 func (c *Client) Unmute(context.Context, int64, int64, int64) error { return fmt.Errorf("unsupported") }
+func (c *Client) ListMutes(context.Context, int64, int64) ([]room.Mute, error) {
+	return nil, fmt.Errorf("unsupported")
+}
 func (c *Client) Ban(context.Context, int64, int64, int64, string) error {
 	return fmt.Errorf("unsupported")
 }
 func (c *Client) Unban(context.Context, int64, int64, int64) error { return fmt.Errorf("unsupported") }
+func (c *Client) ListBans(context.Context, int64, int64) ([]room.Ban, error) {
+	return nil, fmt.Errorf("unsupported")
+}

@@ -1,6 +1,15 @@
 package gift
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// messageID 返回礼物在历史接口和实时消息中共享的业务消息 ID。
+// Outbox event_id 只标识一次投递事件，不能替代礼物订单本身的身份。
+func messageID(orderNo string) string {
+	return "gift:" + strings.TrimSpace(orderNo)
+}
 
 type Gift struct {
 	ID     int64  `json:"gift_id"`

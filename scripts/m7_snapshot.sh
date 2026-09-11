@@ -2,6 +2,7 @@
 set -euo pipefail
 STAMP="$(date +%Y%m%d-%H%M%S)"
 OUT="${OUT:-reports/m7/snapshot-${STAMP}}"
+WORKER_URL="${WORKER_URL:-http://localhost:${WORKER_HOST_PORT:-19090}}"
 mkdir -p "$OUT"
 
 echo "collecting M7 infrastructure snapshot into $OUT"
@@ -22,7 +23,7 @@ sysctl net.core.somaxconn net.ipv4.tcp_max_syn_backlog > "$OUT/network-sysctl.tx
 docker stats --no-stream > "$OUT/docker-stats.txt"
 docker compose ps > "$OUT/compose-ps.txt"
 curl -fsS http://localhost:8080/metrics > "$OUT/live-api.prom" || true
-curl -fsS http://localhost:9090/metrics > "$OUT/live-worker.prom" || true
+curl -fsS "$WORKER_URL/metrics" > "$OUT/live-worker.prom" || true
 curl -fsS http://localhost:8000/metrics > "$OUT/centrifugo.prom" || true
 docker compose exec -T redis redis-cli INFO > "$OUT/redis-info.txt" || true
 docker compose exec -T mysql mysql -ulive -plive live -e 'SHOW GLOBAL STATUS; SHOW ENGINE INNODB STATUS\G' > "$OUT/mysql-status.txt" 2>&1 || true

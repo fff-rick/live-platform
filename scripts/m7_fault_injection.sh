@@ -2,6 +2,7 @@
 set -euo pipefail
 mkdir -p reports/m7
 REPORT="reports/m7/failure-recovery.csv"
+WORKER_URL="${WORKER_URL:-http://localhost:${WORKER_HOST_PORT:-19090}}"
 if [[ ! -f "$REPORT" ]]; then
   echo "service,stopped_at_ms,recovered_at_ms,recovery_ms" > "$REPORT"
 fi
@@ -20,7 +21,7 @@ wait_ready() {
         curl -fsS http://localhost:8080/ready >/dev/null 2>&1 && return 0
         ;;
       live-worker)
-        curl -fsS http://localhost:9090/health >/dev/null 2>&1 && return 0
+        curl -fsS "$WORKER_URL/health" >/dev/null 2>&1 && return 0
         ;;
       redis)
         docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && return 0

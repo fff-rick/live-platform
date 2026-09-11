@@ -115,7 +115,8 @@ func main() {
 		run("stats-aggregator", aggregator.Run)
 	}
 	if roles["like-snapshot"] {
-		snapshotter := like.NewSnapshotter(log, redis, mysql, cfg.Engagement.LikeSnapshotInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch)
+		checkpoints := like.NewMySQLCheckpointStore(mysql)
+		snapshotter := like.NewSnapshotter(log, redis, checkpoints, cfg.Engagement.LikeSnapshotInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch)
 		run("like-snapshot", snapshotter.Run)
 	}
 

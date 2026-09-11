@@ -2,9 +2,9 @@
 set -euo pipefail
 
 API=${API_BASE:-http://localhost:8080}
-WORKER=${WORKER_BASE:-http://localhost:9090}
+WORKER=${WORKER_BASE:-http://localhost:${WORKER_HOST_PORT:-19090}}
 CF=${CENTRIFUGO_BASE:-http://localhost:8000}
-PROM=${PROMETHEUS_BASE:-http://localhost:9091}
+PROM=${PROMETHEUS_BASE:-http://localhost:${PROMETHEUS_HOST_PORT:-19091}}
 GRAFANA=${GRAFANA_BASE:-http://localhost:3000}
 TEMPO=${TEMPO_BASE:-http://localhost:3200}
 

@@ -11,7 +11,7 @@ import (
 
 // Files contains the production user-facing single-page application.
 //
-//go:embed index.html app.js styles.css
+//go:embed index.html app.js gift-request.mjs message-dedup.mjs styles.css
 var files embed.FS
 
 // Handler serves static assets and falls back to index.html for SPA routes.

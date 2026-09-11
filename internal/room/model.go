@@ -20,3 +20,25 @@ type Room struct {
 	EndedAt        *time.Time `json:"ended_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 }
+
+// RoomAccess 汇总房间状态与用户治理状态，供互动请求一次完成准入判断。
+type RoomAccess struct {
+	Room   Room `json:"room"`
+	Banned bool `json:"banned"`
+	Muted  bool `json:"muted"`
+}
+
+type Mute struct {
+	UserID     int64      `json:"user_id"`
+	Nickname   string     `json:"nickname"`
+	MutedUntil *time.Time `json:"muted_until,omitempty"`
+	Reason     string     `json:"reason"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+}
+
+type Ban struct {
+	UserID    int64     `json:"user_id"`
+	Nickname  string    `json:"nickname"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+}

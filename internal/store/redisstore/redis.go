@@ -170,6 +170,15 @@ func (s *Store) CacheLikeBan(ctx context.Context, roomID, userID int64, banned b
 	return s.client.Set(ctx, likeBanKey(roomID, userID), v, ttl).Err()
 }
 
+// EnforceLikeBan 立即覆盖点赞链路的封禁缓存；解除封禁时删除缓存以回源 MySQL。
+func (s *Store) EnforceLikeBan(ctx context.Context, roomID, userID int64, banned bool) error {
+	key := likeBanKey(roomID, userID)
+	if !banned {
+		return s.client.Del(ctx, key).Err()
+	}
+	return s.client.Set(ctx, key, 1, 0).Err()
+}
+
 var touchViewerScript = redis.NewScript(`
 redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
 redis.call('ZADD', KEYS[2], 'NX', ARGV[1], ARGV[2])
@@ -285,7 +294,28 @@ func (s *Store) EngagementSnapshot(ctx context.Context, roomID int64) (Engagemen
 }
 
 func (s *Store) LikeSnapshot(ctx context.Context, roomID int64) (int64, error) {
-	return s.client.Get(ctx, roomLikeTotalKey(roomID)).Int64()
+	return likeCountResult(s.client.Get(ctx, roomLikeTotalKey(roomID)).Int64())
+}
+
+func likeCountResult(v int64, err error) (int64, error) {
+	if err == redis.Nil {
+		return 0, nil
+	}
+	return v, err
+}
+
+var restoreLikeSnapshotScript = redis.NewScript(`
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local checkpoint = tonumber(ARGV[1])
+if current < checkpoint then
+  redis.call('SET', KEYS[1], checkpoint)
+end
+return 1
+`)
+
+// RestoreLikeSnapshot 只把总数提升到检查点，避免 Worker 重启覆盖更新的实时值。
+func (s *Store) RestoreLikeSnapshot(ctx context.Context, roomID, count int64) error {
+	return restoreLikeSnapshotScript.Run(ctx, s.client, []string{roomLikeTotalKey(roomID)}, count).Err()
 }
 
 func (s *Store) ActiveRooms(ctx context.Context, since time.Time, limit int64) ([]int64, error) {

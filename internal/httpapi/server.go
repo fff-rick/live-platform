@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,15 @@ import (
 )
 
 type Pinger interface{ Ping(context.Context) error }
+type RealtimeController interface {
+	Pinger
+	Publish(context.Context, string, any) error
+	Unsubscribe(context.Context, string, string) error
+}
+type GovernanceStore interface {
+	RemoveViewer(context.Context, int64, int64) (int64, error)
+	EnforceLikeBan(context.Context, int64, int64, bool) error
+}
 type HistoryStore interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
@@ -42,7 +52,8 @@ type Server struct {
 	mysql        Pinger
 	history      HistoryStore
 	redis        Pinger
-	centrifugo   Pinger
+	centrifugo   RealtimeController
+	governance   GovernanceStore
 	metrics      *observability.Metrics
 	auth         *auth.Service
 	appTokens    *auth.TokenManager
@@ -66,7 +77,8 @@ type Deps struct {
 	MySQL           Pinger
 	History         HistoryStore
 	Redis           Pinger
-	Centrifugo      Pinger
+	Centrifugo      RealtimeController
+	Governance      GovernanceStore
 	Metrics         *observability.Metrics
 	Auth            *auth.Service
 	AppTokens       *auth.TokenManager
@@ -90,19 +102,27 @@ type RoomAPI interface {
 	Start(context.Context, int64, int64) (room.Room, error)
 	Stop(context.Context, int64, int64) (room.Room, error)
 	Join(context.Context, int64, int64) (room.Room, error)
+	GetRoomAccess(context.Context, int64, int64) (room.RoomAccess, error)
 	IsMuted(context.Context, int64, int64) (bool, error)
 	IsBanned(context.Context, int64, int64) (bool, error)
 	Mute(context.Context, int64, int64, int64, time.Duration, string) error
 	Unmute(context.Context, int64, int64, int64) error
+	ListMutes(context.Context, int64, int64) ([]room.Mute, error)
 	Ban(context.Context, int64, int64, int64, string) error
 	Unban(context.Context, int64, int64, int64) error
+	ListBans(context.Context, int64, int64) ([]room.Ban, error)
 }
 
 func New(d Deps) *Server {
 	s := &Server{
-		log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
+		log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, centrifugo: d.Centrifugo, governance: d.Governance, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
 		cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, danmaku: d.Danmaku,
 		likes: d.Likes, viewers: d.Viewers, stats: d.Stats, gifts: d.Gifts, wallet: d.Wallet, mux: http.NewServeMux(),
+	}
+	if s.governance == nil {
+		if governance, ok := d.Redis.(GovernanceStore); ok {
+			s.governance = governance
+		}
 	}
 	if raw := strings.TrimSpace(d.CommerceURL); raw != "" {
 		target, err := url.Parse(raw)
@@ -192,8 +212,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/rooms/{room_id}/gifts", s.commerceOr(s.requireAuth(s.sendGift)))
 	s.mux.Handle("GET /api/v1/gift-orders/{order_no}", s.commerceOr(s.requireAuth(s.giftOrder)))
 	s.mux.Handle("POST /api/v1/rooms/{room_id}/mutes", s.identityOr(s.requireAuth(s.muteUser)))
+	s.mux.Handle("GET /api/v1/rooms/{room_id}/mutes", s.identityOr(s.requireAuth(s.listMutes)))
 	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.identityOr(s.requireAuth(s.unmuteUser)))
 	s.mux.Handle("POST /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.banUser)))
+	s.mux.Handle("GET /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.listBans)))
 	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.identityOr(s.requireAuth(s.unbanUser)))
 
 	// The user-facing SPA is served by the API process so local Docker Compose and
@@ -241,7 +263,12 @@ func NewInteraction(d Deps) http.Handler {
 // NewIdentityRoom is the Stage 4 owner for identity, room lifecycle and
 // governance. The gateway forwards the existing v1 contract unchanged.
 func NewIdentityRoom(d Deps) http.Handler {
-	s := &Server{log: d.Log, mysql: d.MySQL, redis: d.Redis, centrifugo: d.Centrifugo, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens, cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, stats: d.Stats, mux: http.NewServeMux()}
+	s := &Server{log: d.Log, mysql: d.MySQL, redis: d.Redis, centrifugo: d.Centrifugo, governance: d.Governance, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens, cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, stats: d.Stats, mux: http.NewServeMux()}
+	if s.governance == nil {
+		if governance, ok := d.Redis.(GovernanceStore); ok {
+			s.governance = governance
+		}
+	}
 	s.mux.HandleFunc("GET /health", s.health)
 	s.mux.HandleFunc("GET /ready", s.ready)
 	if s.metrics != nil {
@@ -257,8 +284,10 @@ func NewIdentityRoom(d Deps) http.Handler {
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/start", s.requireAuth(s.startRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/stop", s.requireAuth(s.stopRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/mutes", s.requireAuth(s.muteUser))
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/mutes", s.requireAuth(s.listMutes))
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.requireAuth(s.unmuteUser))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/bans", s.requireAuth(s.banUser))
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/bans", s.requireAuth(s.listBans))
 	s.mux.HandleFunc("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.requireAuth(s.unbanUser))
 	// Internal, versioned read contract for the interaction migration. It is not
 	// exposed by the public gateway Service.
@@ -271,22 +300,12 @@ func NewIdentityRoom(d Deps) http.Handler {
 		if !ok {
 			return
 		}
-		v, err := s.rooms.Get(r.Context(), roomID)
+		access, err := s.rooms.GetRoomAccess(r.Context(), roomID, userID)
 		if err != nil {
 			handleRoomError(w, err)
 			return
 		}
-		banned, err := s.rooms.IsBanned(r.Context(), roomID, userID)
-		if err != nil {
-			writeError(w, 500, "INTERNAL_ERROR", "access lookup failed")
-			return
-		}
-		muted, err := s.rooms.IsMuted(r.Context(), roomID, userID)
-		if err != nil {
-			writeError(w, 500, "INTERNAL_ERROR", "access lookup failed")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"room": v, "banned": banned, "muted": muted})
+		writeJSON(w, http.StatusOK, access)
 	})
 	s.mux.HandleFunc("GET /internal/v1/rooms/{room_id}", s.getRoom)
 	s.mux.HandleFunc("GET /internal/v1/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
@@ -1018,7 +1037,28 @@ func (s *Server) muteUser(w http.ResponseWriter, r *http.Request, actorID int64)
 		handleRoomError(w, err)
 		return
 	}
+	if s.centrifugo != nil {
+		event := realtime.NewPriorityEvent(idgen.New(), "room_muted", roomID, "P0", map[string]any{
+			"user_id": in.UserID, "duration_seconds": in.DurationSeconds, "reason": strings.TrimSpace(in.Reason),
+		})
+		if err := s.centrifugo.Publish(r.Context(), realtime.Personal(in.UserID), event); err != nil {
+			s.log.Error("publish mute notice", "error", err, "room_id", roomID, "user_id", in.UserID)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "muted", "user_id": in.UserID})
+}
+
+func (s *Server) listMutes(w http.ResponseWriter, r *http.Request, actorID int64) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	items, err := s.rooms.ListMutes(r.Context(), roomID, actorID)
+	if err != nil {
+		handleRoomError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) unmuteUser(w http.ResponseWriter, r *http.Request, actorID int64) {
@@ -1056,7 +1096,25 @@ func (s *Server) banUser(w http.ResponseWriter, r *http.Request, actorID int64) 
 		handleRoomError(w, err)
 		return
 	}
+	if err := s.enforceBan(r.Context(), roomID, in.UserID, strings.TrimSpace(in.Reason)); err != nil {
+		s.log.Error("enforce room ban", "error", err, "room_id", roomID, "user_id", in.UserID)
+		writeError(w, http.StatusServiceUnavailable, "BAN_ENFORCEMENT_FAILED", "ban saved but immediate eviction failed; retry safely")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "banned", "user_id": in.UserID})
+}
+
+func (s *Server) listBans(w http.ResponseWriter, r *http.Request, actorID int64) {
+	roomID, ok := pathInt64(w, r, "room_id")
+	if !ok {
+		return
+	}
+	items, err := s.rooms.ListBans(r.Context(), roomID, actorID)
+	if err != nil {
+		handleRoomError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
 func (s *Server) unbanUser(w http.ResponseWriter, r *http.Request, actorID int64) {
@@ -1072,7 +1130,43 @@ func (s *Server) unbanUser(w http.ResponseWriter, r *http.Request, actorID int64
 		handleRoomError(w, err)
 		return
 	}
+	if s.governance != nil {
+		if err := s.governance.EnforceLikeBan(r.Context(), roomID, targetID, false); err != nil {
+			s.log.Error("clear like ban cache", "error", err, "room_id", roomID, "user_id", targetID)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unbanned", "user_id": targetID})
+}
+
+func (s *Server) enforceBan(ctx context.Context, roomID, userID int64, reason string) error {
+	var enforcementErrors []error
+	if s.governance != nil {
+		if err := s.governance.EnforceLikeBan(ctx, roomID, userID, true); err != nil {
+			enforcementErrors = append(enforcementErrors, fmt.Errorf("cache ban: %w", err))
+		}
+		if _, err := s.governance.RemoveViewer(ctx, roomID, userID); err != nil {
+			enforcementErrors = append(enforcementErrors, fmt.Errorf("remove viewer: %w", err))
+		}
+	} else {
+		enforcementErrors = append(enforcementErrors, errors.New("governance store unavailable"))
+	}
+	if s.centrifugo != nil {
+		event := realtime.NewPriorityEvent(idgen.New(), "room_banned", roomID, "P0", map[string]any{
+			"user_id": userID, "reason": reason,
+		})
+		if err := s.centrifugo.Publish(ctx, realtime.Personal(userID), event); err != nil {
+			enforcementErrors = append(enforcementErrors, fmt.Errorf("publish ban notice: %w", err))
+		}
+		uid := strconv.FormatInt(userID, 10)
+		for _, channel := range []string{realtime.RoomStream(roomID), realtime.RoomStats(roomID)} {
+			if err := s.centrifugo.Unsubscribe(ctx, uid, channel); err != nil {
+				enforcementErrors = append(enforcementErrors, fmt.Errorf("unsubscribe %s: %w", channel, err))
+			}
+		}
+	} else {
+		enforcementErrors = append(enforcementErrors, errors.New("centrifugo unavailable"))
+	}
+	return errors.Join(enforcementErrors...)
 }
 
 type authedHandler func(http.ResponseWriter, *http.Request, int64)
@@ -1103,6 +1197,10 @@ func handleRoomError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "ROOM_BANNED", err.Error())
 	case errors.Is(err, room.ErrForbidden):
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
+	case errors.Is(err, room.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, "USER_NOT_FOUND", err.Error())
+	case errors.Is(err, room.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, "INVALID_ROOM_INPUT", err.Error())
 	case errors.Is(err, room.ErrSelfModeration):
 		writeError(w, http.StatusBadRequest, "SELF_MODERATION_NOT_ALLOWED", err.Error())
 	case errors.Is(err, room.ErrInvalidState):

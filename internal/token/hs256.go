@@ -61,7 +61,7 @@ func (i *Issuer) SubscriptionToken(userID, channel string, ttl time.Duration) (s
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
 	header := map[string]string{"alg": "HS256", "typ": "JWT"}
-	claims := subscriptionClaims{Sub: userID, Channel: channel, Exp: exp.Unix(), ExpireAt: 0, Iat: now.Unix()}
+	claims := subscriptionClaims{Sub: userID, Channel: channel, Exp: exp.Unix(), ExpireAt: exp.Unix(), Iat: now.Unix()}
 	h, _ := json.Marshal(header)
 	c, _ := json.Marshal(claims)
 	unsigned := encode(h) + "." + encode(c)
