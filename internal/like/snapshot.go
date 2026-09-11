@@ -46,7 +46,7 @@ WHERE room_id > ? ORDER BY room_id LIMIT ?`, afterRoomID, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	checkpoints := make([]Checkpoint, 0)
 	for rows.Next() {

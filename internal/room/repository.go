@@ -165,7 +165,7 @@ WHERE b.room_id=? ORDER BY b.created_at DESC`, roomID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Ban, 0)
 	for rows.Next() {
 		var item Ban
@@ -210,7 +210,7 @@ ORDER BY m.updated_at DESC`, roomID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Mute, 0)
 	for rows.Next() {
 		var item Mute
