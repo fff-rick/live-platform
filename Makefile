@@ -1,4 +1,4 @@
-.PHONY: run worker test test-contracts vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery
+.PHONY: run worker test test-contracts vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
 
 run:
 	go run ./cmd/api
@@ -50,6 +50,13 @@ test-m5-kafka-recovery:
 
 smoke-m6:
 	./scripts/m6_observability_smoke.sh
+
+# 自动启动缺失的 Compose 服务，并验证业务与基础设施看板指标。
+metrics-load:
+	./scripts/full_metrics_load.sh
+
+k6-system-load:
+	./scripts/k6_system_load.sh
 
 .PHONY: m7-degradation-smoke m7-connection-sweep m7-hotroom m7-hotroom-ladder m7-slow-consumer m7-like-storm m7-like-ladder m7-gift-load m7-gift-compare m7-soak m7-snapshot m7-fault
 m7-degradation-smoke:
