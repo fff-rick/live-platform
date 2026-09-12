@@ -1,0 +1,79 @@
+[
+  {
+    "source_id": "live-platform-service-api-v1",
+    "path": "services/live-api.md",
+    "title": "live-api service ownership and dependencies",
+    "document_type": "service",
+    "service": "live-api",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/services/live-api.md"
+  },
+  {
+    "source_id": "live-platform-service-commerce-v1",
+    "path": "services/live-commerce.md",
+    "title": "live-commerce service ownership and dependencies",
+    "document_type": "service",
+    "service": "live-commerce",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/services/live-commerce.md"
+  },
+  {
+    "source_id": "live-platform-service-interaction-v1",
+    "path": "services/live-interaction.md",
+    "title": "live-interaction service ownership and dependencies",
+    "document_type": "service",
+    "service": "live-interaction",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/services/live-interaction.md"
+  },
+  {
+    "source_id": "live-platform-service-identity-room-v1",
+    "path": "services/live-identity-room.md",
+    "title": "live-identity-room service ownership and dependencies",
+    "document_type": "service",
+    "service": "live-identity-room",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/services/live-identity-room.md"
+  },
+  {
+    "source_id": "live-platform-service-worker-v1",
+    "path": "services/live-worker.md",
+    "title": "live-worker service ownership and dependencies",
+    "document_type": "service",
+    "service": "live-worker",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/services/live-worker.md"
+  },
+  {
+    "source_id": "live-platform-runbook-http-5xx-v1",
+    "path": "runbooks/http-5xx.md",
+    "title": "Live Platform HTTP 5xx investigation runbook",
+    "document_type": "runbook",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/runbooks/http-5xx.md"
+  },
+  {
+    "source_id": "live-platform-runbook-outbox-kafka-v1",
+    "path": "runbooks/outbox-kafka.md",
+    "title": "Live Platform Outbox and Kafka backlog runbook",
+    "document_type": "runbook",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/runbooks/outbox-kafka.md"
+  },
+  {
+    "source_id": "live-platform-runbook-database-pool-v1",
+    "path": "runbooks/database-pool.md",
+    "title": "Live Platform MySQL connection pool runbook",
+    "document_type": "runbook",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/runbooks/database-pool.md"
+  },
+  {
+    "source_id": "live-platform-runbook-realtime-v1",
+    "path": "runbooks/realtime-degradation.md",
+    "title": "Live Platform realtime degradation runbook",
+    "document_type": "runbook",
+    "version": "1.0",
+    "source_ref": "repo://live-platform/doc/ai-sre/runbooks/realtime-degradation.md"
+  }
+]

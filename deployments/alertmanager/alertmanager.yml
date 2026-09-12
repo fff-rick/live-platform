@@ -1,0 +1,20 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: ai-sre-copilot
+  group_by: [alertname, service]
+  group_wait: 5s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: ai-sre-copilot
+    webhook_configs:
+      - url: http://host.docker.internal:18000/api/v1/integrations/alertmanager
+        send_resolved: false
+        max_alerts: 100
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: local-alertmanager-token

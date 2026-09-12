@@ -176,6 +176,33 @@ services:
       - "${OTEL_HTTP_HOST_PORT:-14318}:4318"
     depends_on: [tempo]
 
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./deployments/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    ports: ["${LOKI_HOST_PORT:-13100}:3100"]
+
+  alloy:
+    image: grafana/alloy:v1.19.0
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./deployments/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on: [loki]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./deployments/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports: ["${ALERTMANAGER_HOST_PORT:-19093}:9093"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   centrifugo:
     image: centrifugo/centrifugo:v6.9.1
     command: ["centrifugo", "-c", "config.json"]
@@ -260,6 +287,7 @@ services:
       - prometheus_data:/prometheus
     ports: ["${PROMETHEUS_HOST_PORT:-19091}:9090"]
     depends_on:
+      - alertmanager
       - live-api
       - live-worker
       - centrifugo
@@ -282,10 +310,14 @@ services:
     depends_on:
       - prometheus
       - tempo
+      - loki
 
 volumes:
   mysql_data:
   kafka_data:
   tempo_data:
+  loki_data:
+  alloy_data:
+  alertmanager_data:
   prometheus_data:
   grafana_data:
