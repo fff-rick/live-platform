@@ -1,4 +1,4 @@
-.PHONY: run worker test test-contracts vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
+.PHONY: run worker test test-contracts test-release-recorder record-release vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
 
 run:
 	go run ./cmd/api
@@ -8,6 +8,13 @@ worker:
 
 test:
 	go test ./...
+	python3 -m unittest scripts/record_release_test.py
+
+test-release-recorder:
+	python3 -m unittest scripts/record_release_test.py
+
+record-release:
+	python3 scripts/record_release.py $(ARGS)
 
 # Fast compatibility gate for the wire contracts that must stay stable during
 # the modular-monolith to microservices migration.

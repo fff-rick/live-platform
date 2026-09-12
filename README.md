@@ -135,6 +135,16 @@ make k6-system-load       # 使用 k6 执行多场景系统联合压测
 
 生产环境必须替换全部开发密钥，并关闭开发充值接口；详见 [安全说明](SECURITY.md)。
 
+## AI-SRE 知识与发布关联
+
+供 AI-SRE Copilot 导入的服务目录和 Runbook 位于 [doc/ai-sre/catalog.json](doc/ai-sre/catalog.json)。部署成功切流后，用同一个 CI run id 为每个变更服务记录发布事件：
+
+```bash
+make record-release ARGS='--service live-api --version v1.2.3 --revision <git-sha> --environment production --release-id <ci-run-id> --source github-actions'
+```
+
+事件保存在本地 `reports/releases.jsonl`，相同 `release-id + service` 可幂等重试。该文件属于运行数据且被 Git 忽略，应由部署环境持久化并只读挂载给 Copilot。
+
 ## Docker 部署与 HA 演练
 
 Docker 镜像包含 `live-api`、`live-commerce`、`live-interaction`、`live-identity-room`、`live-worker`、`live-migrate` 和默认头像资源。迁移使用 checksum 与 MySQL advisory lock，执行入口为 `make migrate`。
