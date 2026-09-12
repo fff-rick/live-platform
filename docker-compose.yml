@@ -171,8 +171,9 @@ services:
     volumes:
       - ./deployments/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      # Docker Desktop/WSL 常会残留标准 OTLP 端口的转发；宿主机端口允许独立覆盖。
+      - "${OTEL_GRPC_HOST_PORT:-14317}:4317"
+      - "${OTEL_HTTP_HOST_PORT:-14318}:4318"
     depends_on: [tempo]
 
   centrifugo:

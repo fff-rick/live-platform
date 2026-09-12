@@ -419,7 +419,9 @@ func publishLoop(ctx context.Context, c config, ctr *counters) {
 				p := payload{Seq: seq, SentAt: time.Now().UnixNano(), Padding: padding}
 				data, _ := json.Marshal(p)
 				body, _ := json.Marshal(map[string]any{"channel": fmt.Sprintf("room:%d:stream", roomID), "data": json.RawMessage(data)})
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
+				// ctx 只停止继续派发；已经计入本轮的请求应在 HTTP client
+				// timeout 内自然完成，避免测试截止时把在途请求误报为发布失败。
+				req, err := http.NewRequest(http.MethodPost, c.apiURL, bytes.NewReader(body))
 				if err != nil {
 					ctr.publishErr.Add(1)
 					return
