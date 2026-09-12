@@ -91,11 +91,14 @@ make smoke-ui             # UI 冒烟测试
 make smoke-m8             # M8 本地冒烟测试
 make migrate              # 单独执行数据库迁移
 make metrics-load         # 自动启动项目并执行全链路指标压测
+make k6-system-load       # 使用 k6 执行多场景系统联合压测
 ```
 
 压测和容量结论请使用 `make m7-*` 命令；真实结果与结论位于 [benchmark/](benchmark/README.md)。
 
 `make metrics-load` 会先检查 API、Worker、Prometheus、Grafana 和 Centrifugo；环境未就绪时自动执行 `docker compose up -d --build`。随后它创建独立测试房间和用户，并发产生 HTTP、弹幕、点赞、礼物、治理、WebSocket、Kafka/Outbox 流量，最后通过 Prometheus API 验证看板依赖的应用与 MySQL、Redis、Kafka 指标。报告写入 `reports/metrics-load/<run_id>/`，常用负载参数可通过 `DURATION`、`USERS`、`READ_RATE`、`DANMAKU_RATE`、`LIKE_RATE`、`GIFT_RATE` 和 `WS_CLIENTS` 覆盖。
+
+`make k6-system-load` 使用 k6 的 constant-arrival-rate 和 constant-vus executor 同时模拟房间浏览、观众心跳、弹幕、点赞、礼物以及 Centrifugo WebSocket 订阅。默认持续 30 秒，门禁为请求失败率低于 1%、全局 P95 小于 500ms、P99 小于 1s、业务成功率高于 99% 且无 dropped iterations。报告写入 `reports/k6-system/<run_id>/`；可通过 `LOAD_DURATION`、`LOAD_USERS`、`BROWSE_RATE`、`DANMAKU_RATE`、`LIKE_RATE`、`GIFT_RATE` 和 `WS_VUS` 调整负载。
 
 ## 核心接口
 
