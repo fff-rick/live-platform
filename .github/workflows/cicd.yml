@@ -54,7 +54,8 @@ jobs:
   publish-and-sync:
     name: Publish the PR-selected version and trigger Argo CD
     needs: quality-gate
-    if: github.event_name == 'push'
+    # CD stays opt-in while the Argo CD server is unavailable.
+    if: github.event_name == 'push' && vars.ENABLE_ARGOCD_DEPLOYMENT == 'true'
     runs-on: ubuntu-latest
     permissions:
       packages: write
