@@ -11,7 +11,7 @@ import (
 
 // Files contains the production user-facing single-page application.
 //
-//go:embed index.html app.js gift-request.mjs message-dedup.mjs styles.css
+//go:embed index.html app.js gift-request.mjs message-dedup.mjs styles.css lumi.css
 var files embed.FS
 
 // Handler serves static assets and falls back to index.html for SPA routes.
@@ -23,8 +23,8 @@ func Handler() http.Handler {
 			serveIndex(w, r)
 			return
 		}
-		if strings.HasPrefix(clean, "front_con/ava/") {
-			http.StripPrefix("/front_con/ava/", http.FileServer(http.FS(os.DirFS("front_con/ava")))).ServeHTTP(w, r)
+		if strings.HasPrefix(clean, "front_con/") {
+			http.StripPrefix("/front_con/", http.FileServer(http.FS(os.DirFS("front_con")))).ServeHTTP(w, r)
 			return
 		}
 		if _, err := fs.Stat(files, clean); err == nil {

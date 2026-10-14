@@ -15,11 +15,11 @@ func TestHandlerServesSPAAndAssets(t *testing.T) {
 		r := httptest.NewRequest("GET", path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
-		if w.Code != 200 || !strings.Contains(w.Body.String(), "LiveFlow") {
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "LUMI LIVE") {
 			t.Fatalf("path=%s code=%d", path, w.Code)
 		}
 	}
-	assets := map[string]string{"/styles.css": "--pink", "/gift-request.mjs": "GiftRequestStore", "/message-dedup.mjs": "rememberMessage"}
+	assets := map[string]string{"/styles.css": "--pink", "/lumi.css": "LUMI LIVE", "/gift-request.mjs": "GiftRequestStore", "/message-dedup.mjs": "rememberMessage"}
 	for path, marker := range assets {
 		r := httptest.NewRequest("GET", path, nil)
 		w := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestHandlerServesSPAAndAssets(t *testing.T) {
 	}
 }
 
-func TestHandlerServesAvatarAssets(t *testing.T) {
+func TestHandlerServesFrontendAssets(t *testing.T) {
 	oldWorkingDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +55,9 @@ func TestHandlerServesAvatarAssets(t *testing.T) {
 		{path: "/front_con/ava/布偶.svg", contentType: "image/svg+xml"},
 		{path: "/front_con/ava/female.png", contentType: "image/png"},
 		{path: "/front_con/ava/male.png", contentType: "image/png"},
+		{path: "/front_con/background/hot.png", contentType: "image/png"},
+		{path: "/front_con/icon/like.png", contentType: "image/png"},
+		{path: "/front_con/logo/project.png", contentType: "image/png"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, asset.path, nil)
 		w := httptest.NewRecorder()
@@ -74,10 +77,10 @@ func TestHomeHeroCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	copy := string(app)
-	if !strings.Contains(copy, "Live Platform") || !strings.Contains(copy, "To show your beatiful life!") {
+	if !strings.Contains(copy, "LUMI LIVE") || !strings.Contains(copy, "To show your beautiful life!") {
 		t.Fatal("home hero copy is missing")
 	}
-	if strings.Contains(copy, "REALTIME · HIGH CONCURRENCY") || strings.Contains(copy, "高并发直播互动，") || strings.Contains(copy, "实时读取后端 LIVING 房间与在线数据") {
+	if strings.Contains(copy, "LiveFlow") || strings.Contains(copy, "Live Platform") || strings.Contains(copy, "beatiful") {
 		t.Fatal("old home hero copy is still present")
 	}
 }

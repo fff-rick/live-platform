@@ -36,16 +36,11 @@ const state = {
   seenMessages: new Set(),
 };
 
-const gradients = [
-  'linear-gradient(135deg,#536976,#292e49)',
-  'linear-gradient(135deg,#654ea3,#eaafc8)',
-  'linear-gradient(135deg,#11998e,#38ef7d)',
-  'linear-gradient(135deg,#fc4a1a,#f7b733)',
-  'linear-gradient(135deg,#4776e6,#8e54e9)',
-  'linear-gradient(135deg,#ee0979,#ff6a00)',
-  'linear-gradient(135deg,#1d4350,#a43931)',
-  'linear-gradient(135deg,#0f2027,#2c5364)',
-];
+const roomThemes = ['chat','game','life','music','outside'].map(name => ({
+  background: `/front_con/background/${name}.png`,
+  icon: `/front_con/icon/${name}.png`,
+}));
+const roomAvatars = ['布偶','暹罗猫','波斯猫','狸花猫','缅因猫'].map(name => `/front_con/ava/${name}.svg`);
 const giftEmoji = ['🌸','🚀','💎','🎂','🎆','👑','🎁','⭐'];
 
 function esc(value='') {
@@ -54,6 +49,8 @@ function esc(value='') {
 function fmtNum(v=0){ v=Number(v)||0; if(v>=1000000)return (v/1000000).toFixed(1)+'M'; if(v>=10000)return (v/10000).toFixed(1)+'万'; if(v>=1000)return (v/1000).toFixed(1)+'k'; return String(v); }
 function fmtTime(v){ if(!v)return ''; const d=new Date(v); return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 function newKey(){ return crypto.randomUUID ? crypto.randomUUID() : `gift-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function roomTheme(roomID,index=0){ return roomThemes[(Number(roomID||0)+index)%roomThemes.length]; }
+function roomAvatar(anchorID){ return roomAvatars[Number(anchorID||0)%roomAvatars.length]; }
 const giftRequests = new GiftRequestStore(localStorage, newKey);
 function wsURL(){ const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:'; const localCompose=(location.hostname==='localhost'||location.hostname==='127.0.0.1')&&location.port==='8080'; const host=localCompose?`${location.hostname}:8000`:location.host; return `${scheme}//${host}/connection/websocket`; }
 
@@ -107,8 +104,8 @@ function userAvatar(user, className='avatar'){
 }
 function header(){
   return `<header class="topbar">
-    <a class="logo" href="/" data-nav><span class="logo-mark">L</span><span>Live<em>Flow</em></span></a>
-    <nav class="nav"><a class="${state.currentRoute==='/'?'active':''}" href="/" data-nav>直播首页</a><a href="/studio" data-nav>直播中心</a></nav>
+    <a class="logo" href="/" data-nav><img src="/front_con/logo/project.png" alt="LUMI LIVE"></a>
+    <nav class="nav"><a class="${state.currentRoute==='/'?'active':''}" href="/" data-nav><img src="/front_con/icon/hoem.png" alt="">直播首页</a><a class="${state.currentRoute==='/studio'?'active':''}" href="/studio" data-nav><img src="/front_con/icon/more.png" alt="">直播中心</a></nav>
     <div class="search"><input id="room-search" placeholder="搜索直播标题或主播"><button id="search-btn">⌕</button></div>
     <div class="top-spacer"></div>
     <div class="user-actions">
@@ -120,25 +117,25 @@ function header(){
 function homeTemplate(){
   const cards = state.rooms.length ? state.rooms.map((r,i)=>roomCard(r,i)).join('') : `<div class="empty" style="grid-column:1/-1"><strong>还没有正在直播的房间</strong>登录后点击「开播」创建你的第一个直播间。<div style="margin-top:18px"><button class="btn primary" id="empty-create">立即开播</button></div></div>`;
   return `<div class="shell">${header()}
-    <section class="hero"><div class="hero-card"><div class="hero-copy"><h1>Live Platform</h1><p>To show your beatiful life!</p></div><div class="hero-orb"></div></div></section>
-    <main class="content"><div class="section-head"><div class="section-title"><span class="dot"></span><h2>正在直播</h2></div><button class="btn ghost small" id="refresh-rooms">↻ 刷新</button></div><div class="room-grid" id="room-grid">${cards}</div></main>
+    <section class="hero"><div class="hero-card"><div class="hero-copy"><span class="eyebrow">WELCOME TO</span><h1>LUMI LIVE</h1><p>To show your beautiful life!</p></div><div class="hero-orb"></div></div></section>
+    <main class="content"><div class="section-head"><div class="section-title"><img class="section-icon" src="/front_con/icon/hot.png" alt=""><h2>正在直播</h2></div><button class="btn ghost small" id="refresh-rooms">↻ 刷新</button></div><div class="room-grid" id="room-grid">${cards}</div></main>
   </div>`;
 }
 function roomCard(r,i){
-  const g=gradients[(Number(r.room_id)+i)%gradients.length];
-  return `<article class="room-card" data-room="${r.room_id}"><div class="thumb" style="--thumb:${g}"><span class="live-tag">LIVE</span><span class="view-tag">◉ ${fmtNum(r.viewer_count)} · ♥ ${fmtNum(r.like_count)}</span><div class="play-symbol">▶</div></div><div class="room-info"><div class="room-title">${esc(r.title)}</div><div class="room-meta"><div class="anchor"><span class="mini-avatar">${esc((r.anchor_nickname||'主').slice(0,1))}</span><span>${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)}</span></div><span>#${r.room_id}</span></div></div></article>`;
+  const theme=roomTheme(r.room_id,i);
+  return `<article class="room-card" data-room="${r.room_id}"><div class="thumb" style="--thumb-image:url('${theme.background}')"><span class="live-tag">LIVE</span><span class="view-tag">◉ ${fmtNum(r.viewer_count)} · ♥ ${fmtNum(r.like_count)}</span><div class="play-symbol"><img src="${theme.icon}" alt=""></div></div><div class="room-info"><div class="room-title">${esc(r.title)}</div><div class="room-meta"><div class="anchor"><img class="mini-avatar" src="${roomAvatar(r.anchor_id)}" alt="${esc(r.anchor_nickname||'主播')}的头像"><span>${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)}</span></div><span>#${r.room_id}</span></div></div></article>`;
 }
 
 function roomTemplate(){
   if(!state.room) return `<div class="shell">${header()}<main class="content"><div class="empty"><strong>直播间加载中…</strong></div></main></div>`;
   const r=state.room; const isAnchor=state.user && Number(state.user.id)===Number(r.anchor_id); const living=r.status==='LIVING';
   return `<div class="shell">${header()}<main class="room-page">
-    <div class="room-topline"><div class="room-heading"><div class="anchor-avatar" style="width:42px;height:42px;font-size:16px">${esc((r.anchor_nickname||'主').slice(0,1))}</div><div><h1>${esc(r.title)}</h1><div class="sub">${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)} · 房间 ${r.room_id}</div></div></div><div>${living?'<span class="live-status"><i></i>直播中</span>':`<span class="status-pill ${r.status}">${r.status}</span>`}${isAnchor?'<button class="btn ghost small" id="governance-btn" style="margin-left:10px">治理名单</button>':''}${isAnchor&&living?'<button class="btn danger small" id="stop-live" style="margin-left:10px">结束直播</button>':''}</div></div>
+    <div class="room-topline"><div class="room-heading"><img class="anchor-avatar compact" src="${roomAvatar(r.anchor_id)}" alt="${esc(r.anchor_nickname||'主播')}的头像"><div><h1>${esc(r.title)}</h1><div class="sub">${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)} · 房间 ${r.room_id}</div></div></div><div>${living?'<span class="live-status"><i></i>直播中</span>':`<span class="status-pill ${r.status}">${r.status}</span>`}${isAnchor?'<button class="btn ghost small" id="governance-btn" style="margin-left:10px">治理名单</button>':''}${isAnchor&&living?'<button class="btn danger small" id="stop-live" style="margin-left:10px">结束直播</button>':''}</div></div>
     <div class="room-layout">
-      <section class="player"><div class="stream-scene"></div><div class="stream-grid"></div><div class="stream-center"><div class="cam">▣</div><strong>媒体流接入位</strong><span>当前项目实现直播互动层；接入 SRS / LiveKit / 云直播后在此播放媒体流</span><code>interaction channel: room:${r.room_id}:stream</code></div><div class="player-top"><span class="player-tag live">LIVE</span><span class="player-tag" id="traffic-tag">互动链路 · ${state.realtime==='online'?'已连接':'连接中'}</span></div><div class="danmaku-layer" id="danmaku-layer"></div><div class="player-controls"><span>◉ ${fmtNum(state.stats.viewer_count)} 在线</span><span>♥ ${fmtNum(state.stats.like_count)} 点赞</span><span class="right">Centrifugo · WebSocket</span></div></section>
-      <aside class="chat-panel"><div class="chat-head"><strong>直播互动</strong><span class="chat-status" id="chat-status">${state.realtime==='online'?'● 实时':'○ 离线'}</span></div><div class="chat-list" id="chat-list">${chatHTML(isAnchor)}</div><div class="chat-compose"><form class="compose-box" id="chat-form"><input id="chat-input" maxlength="200" placeholder="${state.user?'发一条友善的弹幕吧':'登录后发送弹幕'}" ${!state.user||!living?'disabled':''}><button ${!state.user||!living?'disabled':''}>发送</button></form><div class="compose-hint"><span>Enter 发送 · 后端限流/敏感词校验</span><span>≤ 200 字</span></div></div></aside>
+      <section class="player" style="--stream-image:url('${roomTheme(r.room_id).background}')"><div class="stream-scene"></div><div class="stream-grid"></div><div class="stream-center"><div class="cam">▣</div><strong>媒体流接入位</strong><span>当前项目实现直播互动层；接入 SRS / LiveKit / 云直播后在此播放媒体流</span><code>interaction channel: room:${r.room_id}:stream</code></div><div class="player-top"><span class="player-tag live">LIVE</span><span class="player-tag" id="traffic-tag">互动链路 · ${state.realtime==='online'?'已连接':'连接中'}</span></div><div class="danmaku-layer" id="danmaku-layer"></div><div class="player-controls"><span>◉ ${fmtNum(state.stats.viewer_count)} 在线</span><span>♥ ${fmtNum(state.stats.like_count)} 点赞</span><span class="right">Centrifugo · WebSocket</span></div></section>
+      <aside class="chat-panel"><div class="chat-head"><strong><img src="/front_con/icon/chat.png" alt="">直播互动</strong><span class="chat-status" id="chat-status">${state.realtime==='online'?'● 实时':'○ 离线'}</span></div><div class="chat-list" id="chat-list">${chatHTML(isAnchor)}</div><div class="chat-compose"><form class="compose-box" id="chat-form"><input id="chat-input" maxlength="200" placeholder="${state.user?'发一条友善的弹幕吧':'登录后发送弹幕'}" ${!state.user||!living?'disabled':''}><button ${!state.user||!living?'disabled':''}>发送</button></form><div class="compose-hint"><span>Enter 发送 · 后端限流/敏感词校验</span><span>≤ 200 字</span></div></div></aside>
     </div>
-    <section class="below-player"><div class="anchor-bar"><div class="anchor-avatar">${esc((r.anchor_nickname||'主').slice(0,1))}</div><div class="anchor-detail"><strong>${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)}</strong><span>房主 #${r.anchor_id} · ${living?'正在直播':'当前未开播'}</span></div><div class="anchor-spacer"></div><div class="stat-chip"><span>在线 <b id="viewer-count">${fmtNum(state.stats.viewer_count)}</b></span><span>点赞 <b id="like-count">${fmtNum(state.stats.like_count)}</b></span></div><button class="like-btn" id="like-btn" title="点赞" ${!state.user||!living?'disabled':''}>♥</button></div>
+    <section class="below-player"><div class="anchor-bar"><img class="anchor-avatar" src="${roomAvatar(r.anchor_id)}" alt="${esc(r.anchor_nickname||'主播')}的头像"><div class="anchor-detail"><strong>${esc(r.anchor_nickname||`主播 #${r.anchor_id}`)}</strong><span>房主 #${r.anchor_id} · ${living?'正在直播':'当前未开播'}</span></div><div class="anchor-spacer"></div><div class="stat-chip"><span>在线 <b id="viewer-count">${fmtNum(state.stats.viewer_count)}</b></span><span>点赞 <b id="like-count">${fmtNum(state.stats.like_count)}</b></span></div><button class="like-btn" id="like-btn" type="button" aria-label="点赞" title="点赞" ${!state.user||!living?'disabled':''}><img src="/front_con/icon/like.png" alt=""></button></div>
       <div class="gift-zone"><div class="gift-zone-head"><strong>礼物互动</strong><span class="wallet-mini">我的余额 <b id="wallet-mini">${state.wallet?fmtNum(state.wallet.balance):'--'}</b> 币 <button class="btn small" id="open-wallet">钱包</button></span></div><div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap"><div class="gift-list" id="gift-list">${giftHTML()}</div><div class="gift-send"><input class="gift-count" id="gift-count" type="number" min="1" max="100" value="1"><button class="btn primary" id="gift-send" ${!state.user||!living?'disabled':''}>赠送</button><button class="btn ghost" id="gift-combo" ${!state.user||!living?'disabled':''}>连击</button><span class="gift-pending" id="gift-pending">${state.pendingGiftCount?`待合并 ×${state.pendingGiftCount}`:''}</span></div></div></div>
     </section>
   </main></div>`;
@@ -162,12 +159,12 @@ function giftHTML(){
 
 function studioTemplate(){
   return `<div class="shell">${header()}<main class="studio-page"><div class="section-head"><div><div class="section-title"><span class="dot"></span><h2>直播中心</h2></div><div class="section-sub">创建直播间并管理开播状态</div></div></div>
-    ${state.user?`<div class="studio-grid"><section class="studio-card"><h3 style="margin-top:0">创建一个直播间</h3><p style="color:#777;font-size:13px">媒体流与互动流解耦。这里先创建互动房间，创建后可以直接开播并进入直播间。</p><form id="create-room-form"><div class="field"><label>直播标题</label><input id="studio-title" maxlength="100" value="Go 高并发直播互动实战" placeholder="输入直播标题"></div><button class="btn primary" type="submit">创建并开播</button></form></section><aside class="studio-preview"><div style="font-size:52px">◉</div><strong style="font-size:20px;margin:8px 0">主播工作台</strong><span style="color:#aab1bd;font-size:12px">创建成功后将自动调用 Room Start API</span></aside></div>`:`<div class="empty"><strong>登录后才能创建直播间</strong><button class="btn primary" id="studio-login" style="margin-top:15px">登录 / 注册</button></div>`}
+    ${state.user?`<div class="studio-grid"><section class="studio-card"><h3 style="margin-top:0">创建一个直播间</h3><p style="color:#777;font-size:13px">媒体流与互动流解耦。这里先创建互动房间，创建后可以直接开播并进入直播间。</p><form id="create-room-form"><div class="field"><label>直播标题</label><input id="studio-title" maxlength="100" value="Go 高并发直播互动实战" placeholder="输入直播标题"></div><button class="btn primary" type="submit">创建并开播</button></form></section><aside class="studio-preview"><img class="studio-icon" src="/front_con/icon/more.png" alt=""><strong style="font-size:20px;margin:8px 0">主播工作台</strong><span style="color:#e4ddff;font-size:12px">创建成功后将自动调用 Room Start API</span></aside></div>`:`<div class="empty"><strong>登录后才能创建直播间</strong><button class="btn primary" id="studio-login" style="margin-top:15px">登录 / 注册</button></div>`}
   </main></div>`;
 }
 
 function authModal(){
-  return `<div class="modal-backdrop" id="modal-backdrop"><div class="modal"><div class="modal-head"><h3>欢迎来到 LiveFlow</h3><button class="close" id="modal-close">×</button></div><div class="modal-body"><div class="tabs"><button class="${state.authMode==='login'?'active':''}" data-auth-tab="login">登录</button><button class="${state.authMode==='register'?'active':''}" data-auth-tab="register">注册</button></div><form id="auth-form"><div class="field"><label>用户名</label><input id="auth-username" minlength="3" maxlength="32" required autocomplete="username" placeholder="3-32 位字母、数字或下划线"></div>${state.authMode==='register'?'<div class="field"><label>昵称</label><input id="auth-nickname" maxlength="32" required placeholder="你在直播间显示的名字"></div>':''}<div class="field"><label>密码</label><input id="auth-password" type="password" minlength="8" maxlength="128" required autocomplete="current-password" placeholder="至少 8 位"></div><button class="btn primary submit" type="submit">${state.authMode==='login'?'登录':'注册并登录'}</button></form></div></div></div>`;
+  return `<div class="modal-backdrop" id="modal-backdrop"><div class="modal auth-modal"><div class="auth-visual"><img src="/front_con/logo/project.png" alt="LUMI LIVE"><span>分享此刻，让热爱发光</span></div><div class="auth-panel"><div class="modal-head"><h3>欢迎来到 LUMI LIVE</h3><button class="close" id="modal-close">×</button></div><div class="modal-body"><div class="tabs"><button class="${state.authMode==='login'?'active':''}" data-auth-tab="login">登录</button><button class="${state.authMode==='register'?'active':''}" data-auth-tab="register">注册</button></div><form id="auth-form"><div class="field"><label>用户名</label><input id="auth-username" minlength="3" maxlength="32" required autocomplete="username" placeholder="3-32 位字母、数字或下划线"></div>${state.authMode==='register'?'<div class="field"><label>昵称</label><input id="auth-nickname" maxlength="32" required placeholder="你在直播间显示的名字"></div>':''}<div class="field"><label>密码</label><input id="auth-password" type="password" minlength="8" maxlength="128" required autocomplete="current-password" placeholder="至少 8 位"></div><button class="btn primary submit" type="submit">${state.authMode==='login'?'登录':'注册并登录'}</button></form></div></div></div></div>`;
 }
 function walletDrawer(){
   const txs = state.txs.length ? state.txs.map(t=>`<div class="tx"><div><div class="desc">${esc(t.biz_type)} · ${esc(t.biz_id)}</div><div class="time">${fmtTime(t.created_at)} · 余额 ${fmtNum(t.balance_after)}</div></div><div class="amount ${t.amount<0?'neg':''}">${t.amount>0?'+':''}${fmtNum(t.amount)}</div></div>`).join('') : `<div style="color:#999;font-size:13px;padding:20px 0">暂无交易流水</div>`;
