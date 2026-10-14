@@ -23,8 +23,8 @@ func Handler() http.Handler {
 			serveIndex(w, r)
 			return
 		}
-		if strings.HasPrefix(clean, "svg/") {
-			http.StripPrefix("/svg/", http.FileServer(http.FS(os.DirFS("svg")))).ServeHTTP(w, r)
+		if strings.HasPrefix(clean, "front_con/ava/") {
+			http.StripPrefix("/front_con/ava/", http.FileServer(http.FS(os.DirFS("front_con/ava")))).ServeHTTP(w, r)
 			return
 		}
 		if _, err := fs.Stat(files, clean); err == nil {

@@ -2,7 +2,9 @@
 
 **基路径：** `/api/v1`  
 **认证：** 除下表明确“公开”的接口外，使用 `Authorization: Bearer <access_token>`。  
-**格式：** 请求和响应均为 JSON；错误响应保持既有 `{ "error": { "code", "message" } }` 语义。
+**格式：** 请求和响应均为 JSON；错误响应保持当前 `{ "code": "...", "message": "..." }` 结构。
+
+可执行的完整路由基线见 [`public-api-v1.json`](public-api-v1.json)，其中逐路由记录了方法、认证、必需 Header、成功状态码、错误状态码和稳定错误码。`tests/boundaries` 会将它与 Gateway 实际注册的路由比对。
 
 ## 路由冻结表
 

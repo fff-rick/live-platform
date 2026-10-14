@@ -79,10 +79,8 @@ func (h *ConsumerHandler) Handle(ctx context.Context, rec mq.Record) error {
 	payload, valid := decodeRealtimeGiftPayload(envelope.Payload)
 	if len(envelope.Payload) == 0 || !valid {
 		err := fmt.Errorf("invalid gift payload")
-		// Poison records are committed by the Kafka loop. Mark the event terminal as well
-		// so processed_events does not retain a stale in-progress lock forever.
-		if doneErr := h.dedup.Done(ctx, h.group, envelope.EventID); doneErr != nil {
-			return fmt.Errorf("mark invalid gift event processed: %w", doneErr)
+		if failErr := h.dedup.Fail(ctx, h.group, envelope.EventID, err); failErr != nil {
+			return fmt.Errorf("release invalid gift event: %w", failErr)
 		}
 		return mq.Permanent(err)
 	}

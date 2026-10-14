@@ -5,8 +5,10 @@
 | 契约 | 当前版本 | 规范 |
 | --- | --- | --- |
 | HTTP API | `/api/v1` | [http-api-v1.md](http-api-v1.md) |
+| HTTP 路由机器可读基线 | `public-api-v1` | [public-api-v1.json](public-api-v1.json) |
 | Centrifugo 实时消息 | `room:*` | [realtime-v1.md](realtime-v1.md) |
 | Kafka 领域事件 | Topic `*.v1` | [kafka-events-v1.md](kafka-events-v1.md) |
+| Kafka 生产者、消费者与保留期 | `*.v1` / `*.v1.dlq` | [event-catalog-v1.md](event-catalog-v1.md) |
 
 ## 兼容性规则
 

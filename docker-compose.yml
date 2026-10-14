@@ -146,6 +146,12 @@ services:
       - |
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.danmaku.v1 --partitions 6 --replication-factor 1
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.gift.v1 --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.danmaku.v1.dlq --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic live.gift.v1.dlq --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 --alter --entity-type topics --entity-name live.danmaku.v1 --add-config retention.ms=604800000
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 --alter --entity-type topics --entity-name live.gift.v1 --add-config retention.ms=604800000
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 --alter --entity-type topics --entity-name live.danmaku.v1.dlq --add-config retention.ms=2592000000
+        /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 --alter --entity-type topics --entity-name live.gift.v1.dlq --add-config retention.ms=2592000000
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
 
   kafka-exporter:

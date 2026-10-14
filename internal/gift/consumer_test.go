@@ -99,7 +99,7 @@ func TestGiftConsumerReleasesDedupOnPublishFailure(t *testing.T) {
 	}
 }
 
-func TestGiftConsumerDiscardsInvalidPayloadAndMarksDone(t *testing.T) {
+func TestGiftConsumerReleasesInvalidPayloadForDLQ(t *testing.T) {
 	d := &fakeDedup{}
 	p := &consumerPublisher{}
 	h := NewConsumerHandler("gift-group", d, p, 30*time.Second)
@@ -112,7 +112,7 @@ func TestGiftConsumerDiscardsInvalidPayloadAndMarksDone(t *testing.T) {
 	if err == nil || !mq.IsPermanent(err) {
 		t.Fatalf("expected permanent error, got %v", err)
 	}
-	if p.calls != 0 || d.doneCalls != 1 || d.failCalls != 0 {
+	if p.calls != 0 || d.doneCalls != 0 || d.failCalls != 1 {
 		t.Fatalf("publish=%d done=%d fail=%d", p.calls, d.doneCalls, d.failCalls)
 	}
 }

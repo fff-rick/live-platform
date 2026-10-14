@@ -2,7 +2,9 @@ package webui
 
 import (
 	"io/fs"
+	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,41 @@ func TestHandlerServesSPAAndAssets(t *testing.T) {
 		}
 		if path == "/gift-request.mjs" && !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
 			t.Fatalf("asset=%s content-type=%q", path, w.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestHandlerServesAvatarAssets(t *testing.T) {
+	oldWorkingDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(".."); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWorkingDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+
+	h := Handler()
+	for _, asset := range []struct {
+		path        string
+		contentType string
+	}{
+		{path: "/front_con/ava/布偶.svg", contentType: "image/svg+xml"},
+		{path: "/front_con/ava/female.png", contentType: "image/png"},
+		{path: "/front_con/ava/male.png", contentType: "image/png"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, asset.path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK || w.Body.Len() == 0 {
+			t.Fatalf("asset=%s code=%d size=%d", asset.path, w.Code, w.Body.Len())
+		}
+		if contentType := w.Header().Get("Content-Type"); !strings.Contains(contentType, asset.contentType) {
+			t.Fatalf("asset=%s content-type=%q", asset.path, contentType)
 		}
 	}
 }

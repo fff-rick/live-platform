@@ -42,7 +42,7 @@
 ## 消费与故障规则
 
 - Kafka 仅提供至少一次处理预期；消费者以 `(consumer_group, event_id)` 去重。
-- 事件 payload 无法解析或违反契约时，消费者将其视为永久失败并记录告警；不得无限重试毒消息。
+- 事件 payload 无法解析或违反契约时，消费者将其视为永久失败；必须先成功写入 `<source-topic>.dlq` 才能提交源 offset，禁止只记日志后丢弃。
 - 消费者的临时处理失败将重试，成功处理后才提交 offset。
 - `gift.sent` 由事务 Outbox 发布。Kafka 不可用时，已提交的礼物订单仍正确存在，等待 Publisher 重试。
 - 当前 `danmaku.sent` 为直接异步生产，Kafka 不可用时允许归档缺失但不得影响实时弹幕成功。迁移到需要可靠归档的业务要求时，必须先改为事务 Outbox。
@@ -50,3 +50,5 @@
 ## 演进方式
 
 本版本不修改既有 `event_type` 字符串。未来的破坏性变更使用新的 event type、Topic 或两者，并至少经历：双发/双消费、数据比对、切流、保留窗口、下线旧版本。Schema Registry 只在跨仓库或多语言消费者出现且人工契约审查不再可承受时评估引入。
+
+完整的 producer、consumer group、partition key、保留期、DLQ 和重放命令见 [Kafka 事件目录](event-catalog-v1.md)。

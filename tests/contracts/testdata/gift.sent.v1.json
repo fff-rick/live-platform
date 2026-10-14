@@ -1,0 +1,19 @@
+{
+  "event_id": "gift-01JTEST0000000000000001",
+  "event_type": "gift.sent",
+  "room_id": 9,
+  "created_at": "2026-10-14T08:00:00Z",
+  "payload": {
+    "message_id": "gift:GO-TEST-1",
+    "order_no": "GO-TEST-1",
+    "user_id": 10,
+    "anchor_id": 20,
+    "gift_id": 1,
+    "gift_name": "Rose",
+    "count": 2,
+    "unit_price": 100,
+    "total_amount": 200,
+    "future_optional": {"enabled": true}
+  },
+  "future_envelope_field": 1
+}

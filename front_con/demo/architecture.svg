@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Live Platform 总体架构</title>
+  <desc id="desc">浏览器通过 live-api 访问身份房间、互动和交易服务，通过 Centrifugo 订阅实时消息；MySQL、Redis、Kafka 与 Worker 共同保证数据持久化和异步投递。</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#25304a" flood-opacity=".1"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0 0L0 6L9 3z" fill="#8490a8"/></marker>
+    <style>
+      .title{font:700 28px Inter,"Noto Sans SC",sans-serif;fill:#20263a}.sub{font:400 15px Inter,"Noto Sans SC",sans-serif;fill:#747d91}.h{font:700 17px Inter,"Noto Sans SC",sans-serif;fill:#20263a}.t{font:400 13px Inter,"Noto Sans SC",sans-serif;fill:#697287}.small{font:600 12px Inter,"Noto Sans SC",sans-serif;fill:#68738b}.white{font:700 17px Inter,"Noto Sans SC",sans-serif;fill:#fff}.whiteSub{font:400 13px Inter,"Noto Sans SC",sans-serif;fill:#e9edf7}.line{stroke:#8490a8;stroke-width:2;fill:none;marker-end:url(#arrow)}.dash{stroke:#b4bccd;stroke-width:2;stroke-dasharray:6 6;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1200" height="720" rx="24" fill="#f8f9fc"/>
+  <text x="54" y="54" class="title">一套直播互动，从请求接入到实时分发</text>
+  <text x="54" y="83" class="sub">业务 API、实时通道与异步事件分层，媒体流保留为独立接入面</text>
+
+  <g filter="url(#shadow)">
+    <rect x="54" y="125" width="180" height="108" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <circle cx="91" cy="161" r="17" fill="#ffe3ed"/><text x="85" y="167" class="h">人</text>
+    <text x="120" y="166" class="h">主播 / 观众</text>
+    <text x="80" y="202" class="t">Web UI · HTTP · WebSocket</text>
+    <rect x="314" y="125" width="210" height="108" rx="18" fill="#fff0f5" stroke="#ffc9da"/>
+    <text x="373" y="165" class="h">live-api</text>
+    <text x="348" y="199" class="t">统一入口 · v1 契约 · 反向代理</text>
+    <rect x="924" y="125" width="222" height="108" rx="18" fill="#192234" stroke="#192234"/>
+    <text x="974" y="165" class="white">Centrifugo</text>
+    <text x="957" y="199" class="whiteSub">频道鉴权 · WebSocket 广播</text>
+  </g>
+  <path d="M234 179H314" class="line"/><text x="256" y="165" class="small">HTTP</text>
+  <path d="M234 146C500 99 736 99 924 146" class="line"/><text x="565" y="115" class="small">订阅令牌 + WebSocket</text>
+
+  <path d="M419 233V276H213V307" class="line"/><path d="M419 276H526V307" class="line"/><path d="M419 276H839V307" class="line"/>
+  <g filter="url(#shadow)">
+    <rect x="69" y="307" width="288" height="126" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <rect x="69" y="307" width="288" height="10" rx="5" fill="#7a8cff"/>
+    <text x="100" y="354" class="h">live-identity-room</text>
+    <text x="100" y="384" class="t">认证 · 房间生命周期</text><text x="100" y="408" class="t">禁言 · 封禁 · 身份治理</text>
+    <rect x="382" y="307" width="288" height="126" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <rect x="382" y="307" width="288" height="10" rx="5" fill="#00aeec"/>
+    <text x="413" y="354" class="h">live-interaction</text>
+    <text x="413" y="384" class="t">进退房 · 弹幕 · 点赞</text><text x="413" y="408" class="t">限流 · 热点房间自适应保护</text>
+    <rect x="695" y="307" width="288" height="126" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <rect x="695" y="307" width="288" height="10" rx="5" fill="#fb7299"/>
+    <text x="726" y="354" class="h">live-commerce</text>
+    <text x="726" y="384" class="t">钱包 · 礼物 · 幂等订单</text><text x="726" y="408" class="t">本地事务 · Transactional Outbox</text>
+  </g>
+  <path d="M526 307V266H1035V233" class="dash"/><text x="733" y="256" class="small">实时发布</text>
+
+  <path d="M213 433V458H839V433M526 433V458" fill="none" stroke="#8490a8" stroke-width="2"/>
+  <path d="M199 458V482" class="line"/><path d="M495 458V482" class="line"/><path d="M791 458V482" class="line"/>
+  <g filter="url(#shadow)">
+    <rect x="69" y="482" width="260" height="110" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <circle cx="105" cy="518" r="15" fill="#e9ecff"/><text x="99" y="523" class="small">DB</text>
+    <text x="133" y="523" class="h">MySQL</text><text x="99" y="560" class="t">用户、房间、钱包、订单、历史</text>
+    <rect x="365" y="482" width="260" height="110" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <circle cx="401" cy="518" r="15" fill="#dff7ff"/><text x="395" y="523" class="small">R</text>
+    <text x="429" y="523" class="h">Redis</text><text x="395" y="560" class="t">在线状态、限流、热点统计</text>
+    <rect x="661" y="482" width="260" height="110" rx="18" fill="#fff" stroke="#dfe3ec"/>
+    <circle cx="697" cy="518" r="15" fill="#ffe3ed"/><text x="692" y="523" class="small">K</text>
+    <text x="725" y="523" class="h">Kafka</text><text x="691" y="560" class="t">弹幕归档与礼物领域事件</text>
+    <rect x="957" y="482" width="189" height="110" rx="18" fill="#252d40" stroke="#252d40"/>
+    <text x="995" y="523" class="white">live-worker</text>
+    <text x="984" y="552" class="whiteSub">Outbox · 归档</text><text x="984" y="574" class="whiteSub">统计 · 礼物投递</text>
+  </g>
+  <path d="M921 537H957" class="line"/>
+  <path d="M1052 482V420H1035V233" class="dash"/><text x="1059" y="402" class="small">广播</text>
+
+  <rect x="54" y="638" width="1092" height="44" rx="12" fill="#e9edf6"/>
+  <text x="600" y="665" text-anchor="middle" class="small">Prometheus + Grafana · OpenTelemetry + Tempo · Loki + Alloy · Alertmanager</text>
+</svg>

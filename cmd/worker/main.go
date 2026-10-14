@@ -121,17 +121,20 @@ func main() {
 	}
 
 	var kafkaProducer *mq.Producer
-	if roles["outbox"] {
+	if roles["outbox"] || roles["gift-consumer"] || roles["danmaku-consumer"] {
 		kafkaProducer, err = mq.NewProducerWithConfig(kafkaCfg, log, metrics)
 		if err != nil {
 			log.Error("create kafka producer", "error", err)
 			os.Exit(1)
 		}
 		defer kafkaProducer.Close()
-		outboxRepo := outbox.NewRepository(mysql)
-		outboxPublisher := outbox.NewPublisher(log, outboxRepo, kafkaProducer, "worker-"+idgen.New(), cfg.Outbox.PollInterval, cfg.Outbox.BatchSize, cfg.Outbox.Lease, cfg.Outbox.ProduceTimeout, metrics)
-		run("outbox-publisher", outboxPublisher.Run)
+		if roles["outbox"] {
+			outboxRepo := outbox.NewRepository(mysql)
+			outboxPublisher := outbox.NewPublisher(log, outboxRepo, kafkaProducer, "worker-"+idgen.New(), cfg.Outbox.PollInterval, cfg.Outbox.BatchSize, cfg.Outbox.Lease, cfg.Outbox.ProduceTimeout, metrics)
+			run("outbox-publisher", outboxPublisher.Run)
+		}
 	}
+	dlqWriter := mq.NewKafkaDeadLetterWriter(kafkaProducer)
 
 	var giftConsumer *mq.Consumer
 	if roles["gift-consumer"] {
@@ -140,6 +143,7 @@ func main() {
 			log.Error("create gift consumer", "error", err)
 			os.Exit(1)
 		}
+		giftConsumer.WithDeadLetterWriter(dlqWriter)
 		defer giftConsumer.Close()
 		dedup := eventdedup.NewStore(mysql)
 		giftHandler := gift.NewConsumerHandler(cfg.Kafka.GiftConsumerGroup, dedup, publisher, cfg.Kafka.ConsumerLease)
@@ -153,6 +157,7 @@ func main() {
 			log.Error("create danmaku consumer", "error", err)
 			os.Exit(1)
 		}
+		danmakuConsumer.WithDeadLetterWriter(dlqWriter)
 		defer danmakuConsumer.Close()
 		danmakuHandler := danmaku.NewPersistenceHandler(mysql, log)
 		run("danmaku-consumer", func(ctx context.Context) error { return danmakuConsumer.Run(ctx, danmakuHandler) })

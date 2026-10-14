@@ -40,6 +40,12 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Contract compatibility gate
+        run: make test-contracts
+
+      - name: Architecture boundary gate
+        run: make test-boundaries
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Pre-build image without exporting one

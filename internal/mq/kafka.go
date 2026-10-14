@@ -105,9 +105,20 @@ func NewProducerWithConfig(cfg ClientConfig, log *slog.Logger, metrics ...Metric
 func (p *Producer) Close() { p.client.Close() }
 
 func (p *Producer) ProduceSync(ctx context.Context, topic, key string, value []byte) error {
+	return p.produceSync(ctx, topic, key, value, true)
+}
+
+// ProduceRawSync preserves value byte-for-byte for DLQ storage and replay.
+func (p *Producer) ProduceRawSync(ctx context.Context, topic, key string, value []byte) error {
+	return p.produceSync(ctx, topic, key, value, false)
+}
+
+func (p *Producer) produceSync(ctx context.Context, topic, key string, value []byte, injectTrace bool) error {
 	ctx, span := otel.Tracer("live-platform/kafka").Start(ctx, "kafka.produce "+topic, trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("messaging.destination.name", topic)))
 	started := time.Now()
-	value = InjectTrace(value, ctx)
+	if injectTrace {
+		value = InjectTrace(value, ctx)
+	}
 	rec := &kgo.Record{Topic: topic, Key: []byte(key), Value: value}
 	err := p.client.ProduceSync(ctx, rec).FirstErr()
 	result := "success"
@@ -186,19 +197,22 @@ func kafkaProduceErrorReason(err error) string {
 }
 
 type Record struct {
-	Topic string
-	Key   []byte
-	Value []byte
+	Topic     string
+	Partition int32
+	Offset    int64
+	Key       []byte
+	Value     []byte
 }
 type Handler interface {
 	Handle(context.Context, Record) error
 }
 
 type Consumer struct {
-	client  *kgo.Client
-	log     *slog.Logger
-	group   string
-	metrics Metrics
+	client      *kgo.Client
+	log         *slog.Logger
+	group       string
+	metrics     Metrics
+	deadLetters DeadLetterWriter
 }
 
 func NewConsumer(brokers []string, group string, topics []string, log *slog.Logger, metrics ...Metrics) (*Consumer, error) {
@@ -236,6 +250,18 @@ func NewConsumerWithConfig(cfg ClientConfig, group string, topics []string, log 
 
 func (c *Consumer) Close() { c.client.CloseAllowingRebalance() }
 
+func (c *Consumer) WithDeadLetterWriter(writer DeadLetterWriter) *Consumer {
+	c.deadLetters = writer
+	return c
+}
+
+func (c *Consumer) writeDeadLetter(ctx context.Context, record Record, cause error) error {
+	if c.deadLetters == nil {
+		return errors.New("permanent Kafka record cannot be committed without a DLQ writer")
+	}
+	return c.deadLetters.WriteDeadLetter(ctx, NewDeadLetter(c.group, record, cause))
+}
+
 func (c *Consumer) Run(ctx context.Context, h Handler) error {
 	type tp struct {
 		topic     string
@@ -264,6 +290,7 @@ func (c *Consumer) Run(ctx context.Context, h Handler) error {
 		iter := fetches.RecordIter()
 		for !iter.Done() {
 			rec := iter.Next()
+			record := Record{Topic: rec.Topic, Partition: rec.Partition, Offset: rec.Offset, Key: rec.Key, Value: rec.Value}
 			parent := ContextFromEnvelope(ctx, rec.Value)
 			recCtx, span := otel.Tracer("live-platform/kafka").Start(parent, "kafka.consume "+rec.Topic, trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(
 				attribute.String("messaging.destination.name", rec.Topic),
@@ -273,17 +300,28 @@ func (c *Consumer) Run(ctx context.Context, h Handler) error {
 			))
 			result := "success"
 			for {
-				err := h.Handle(recCtx, Record{Topic: rec.Topic, Key: rec.Key, Value: rec.Value})
+				err := h.Handle(recCtx, record)
 				if err == nil {
 					result = "success"
 					break
 				}
 				if IsPermanent(err) {
-					result = "discarded"
 					span.RecordError(err)
 					span.SetStatus(codes.Error, err.Error())
+					if dlqErr := c.writeDeadLetter(recCtx, record, err); dlqErr != nil {
+						result = "dlq_error"
+						if c.metrics != nil {
+							c.metrics.KafkaConsumed(c.group, rec.Topic, result)
+						}
+						span.RecordError(dlqErr)
+						span.SetStatus(codes.Error, dlqErr.Error())
+						span.End()
+						c.client.AllowRebalance()
+						return fmt.Errorf("dead-letter group=%s topic=%s partition=%d offset=%d: %w", c.group, rec.Topic, rec.Partition, rec.Offset, dlqErr)
+					}
+					result = "dead_lettered"
 					if c.log != nil {
-						c.log.ErrorContext(recCtx, "discard permanent kafka record", "group", c.group, "topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "error", err)
+						c.log.ErrorContext(recCtx, "dead-lettered permanent kafka record", "group", c.group, "topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "error", err)
 					}
 					break
 				}
