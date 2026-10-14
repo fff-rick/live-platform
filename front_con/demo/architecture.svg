@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">Live Platform 总体架构</title>
+  <title id="title">LUMI LIVE 总体架构</title>
   <desc id="desc">浏览器通过 live-api 访问身份房间、互动和交易服务，通过 Centrifugo 订阅实时消息；MySQL、Redis、Kafka 与 Worker 共同保证数据持久化和异步投递。</desc>
   <defs>
     <filter id="shadow" x="-10%" y="-15%" width="120%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#25304a" flood-opacity=".1"/></filter>
@@ -38,7 +38,7 @@
     <text x="413" y="354" class="h">live-interaction</text>
     <text x="413" y="384" class="t">进退房 · 弹幕 · 点赞</text><text x="413" y="408" class="t">限流 · 热点房间自适应保护</text>
     <rect x="695" y="307" width="288" height="126" rx="18" fill="#fff" stroke="#dfe3ec"/>
-    <rect x="695" y="307" width="288" height="10" rx="5" fill="#fb7299"/>
+    <rect x="695" y="307" width="288" height="10" rx="5" fill="#8b5cf6"/>
     <text x="726" y="354" class="h">live-commerce</text>
     <text x="726" y="384" class="t">钱包 · 礼物 · 幂等订单</text><text x="726" y="408" class="t">本地事务 · Transactional Outbox</text>
   </g>
