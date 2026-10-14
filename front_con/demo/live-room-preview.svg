@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">LiveFlow 直播间界面能力示意</title>
+  <desc id="desc">界面包含直播状态、媒体流接入位、弹幕层、礼物榜、在线观众、实时聊天、点赞和礼物面板。</desc>
+  <defs>
+    <linearGradient id="player" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#10131b"/><stop offset=".55" stop-color="#1d2433"/><stop offset="1" stop-color="#2a1727"/></linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fb7299"/><stop offset="1" stop-color="#ff9f7b"/></linearGradient>
+    <linearGradient id="avatar" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#69d0ff"/><stop offset="1" stop-color="#a98bff"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dy="8" stdDeviation="12" flood-color="#20263a" flood-opacity=".12"/></filter>
+    <pattern id="grid" width="38" height="38" patternUnits="userSpaceOnUse"><path d="M38 0H0V38" fill="none" stroke="#fff" stroke-opacity=".05"/></pattern>
+    <style>.h{font:700 17px Inter,"Noto Sans SC",sans-serif;fill:#20242f}.t{font:400 12px Inter,"Noto Sans SC",sans-serif;fill:#7d8492}.small{font:500 11px Inter,"Noto Sans SC",sans-serif;fill:#8c93a0}.white{font:600 12px Inter,"Noto Sans SC",sans-serif;fill:#fff}.chat{font:400 12px Inter,"Noto Sans SC",sans-serif;fill:#3f4552}.name{font:600 11px Inter,"Noto Sans SC",sans-serif;fill:#7a83b1}</style>
+  </defs>
+  <rect width="1200" height="680" rx="24" fill="#f6f7f8"/>
+  <g filter="url(#shadow)"><rect x="35" y="28" width="1130" height="624" rx="18" fill="#fff"/></g>
+  <rect x="35" y="28" width="1130" height="62" rx="18" fill="#fff"/><path d="M35 72H1165V90H35z" fill="#fff"/><line x1="35" y1="90" x2="1165" y2="90" stroke="#e3e5e7"/>
+  <rect x="59" y="43" width="34" height="34" rx="10" fill="url(#brand)"/><text x="71" y="66" style="font:800 18px Inter,sans-serif;fill:#fff">L</text><text x="103" y="65" class="h">Live<tspan fill="#fb7299">Flow</tspan></text>
+  <text x="226" y="64" class="t">首页</text><text x="274" y="64" class="t">直播中心</text>
+  <rect x="695" y="43" width="220" height="34" rx="9" fill="#f1f2f3"/><text x="712" y="64" class="small">搜索直播间或主播</text>
+  <rect x="939" y="43" width="62" height="34" rx="8" fill="#f1f2f3"/><text x="955" y="64" class="small">钱包</text><rect x="1010" y="43" width="62" height="34" rx="8" fill="#fb7299"/><text x="1027" y="64" class="white">开播</text><circle cx="1100" cy="60" r="17" fill="url(#avatar)"/>
+
+  <text x="56" y="125" class="h">Go 高并发直播互动实战</text><circle cx="56" cy="145" r="4" fill="#fb7299"/><text x="67" y="149" class="small">直播中 · 主播 LiveCoder · 房间 #1024</text>
+  <rect x="44" y="170" width="792" height="360" rx="14" fill="url(#player)"/><rect x="44" y="170" width="792" height="360" rx="14" fill="url(#grid)"/>
+  <rect x="60" y="187" width="43" height="25" rx="6" fill="#fb7299"/><text x="69" y="204" class="white">LIVE</text><rect x="111" y="187" width="105" height="25" rx="6" fill="#000" fill-opacity=".5"/><text x="122" y="204" class="white">互动链路 · 已连接</text>
+  <circle cx="748" cy="200" r="16" fill="#ffd76a" stroke="#fff" stroke-width="2"/><circle cx="773" cy="200" r="16" fill="#69d0ff" stroke="#fff" stroke-width="2"/><circle cx="798" cy="200" r="16" fill="#a98bff" stroke="#fff" stroke-width="2"/>
+  <text x="297" y="320" style="font:700 24px Inter,'Noto Sans SC',sans-serif;fill:#fff">媒体流接入位</text><text x="229" y="350" style="font:400 12px Inter,'Noto Sans SC',sans-serif;fill:#aeb5c2">接入 SRS / LiveKit / 云直播后在此播放媒体流</text>
+  <text x="668" y="256" style="font:600 14px Inter,'Noto Sans SC',sans-serif;fill:#fff">这个架构讲得很清楚</text><text x="592" y="292" style="font:600 14px Inter,'Noto Sans SC',sans-serif;fill:#ffd85c">主播，送你一枚火箭 🚀</text><text x="648" y="420" style="font:600 14px Inter,'Noto Sans SC',sans-serif;fill:#fff">Outbox 如何保证可靠投递？</text>
+  <path d="M44 475H836V530H44z" fill="#000" fill-opacity=".34"/><text x="61" y="511" class="white">◉ 2.8k 在线</text><text x="151" y="511" class="white">♥ 12.6k 点赞</text><text x="672" y="511" class="white">Centrifugo · WebSocket</text>
+
+  <rect x="850" y="170" width="296" height="360" rx="14" fill="#fff" stroke="#e8eaed"/><text x="870" y="199" class="h">直播互动</text><text x="1087" y="199" style="font:500 11px Inter,'Noto Sans SC',sans-serif;fill:#2ac864">● 实时</text><line x1="850" y1="217" x2="1146" y2="217" stroke="#eee"/>
+  <text x="869" y="246" class="name">小北</text><text x="911" y="246" class="chat">来了来了，终于开播！</text><text x="869" y="277" class="name">架构喵</text><text x="921" y="277" class="chat">热点房间会自动降级吗？</text>
+  <rect x="864" y="294" width="266" height="34" rx="7" fill="#fff4f7"/><text x="874" y="316" style="font:500 12px Inter,'Noto Sans SC',sans-serif;fill:#a94768">🎁 云朵 赠送 火箭 × 3</text>
+  <text x="869" y="354" class="name">Go同学</text><text x="921" y="354" class="chat">点赞聚合走 Redis 吗？</text><text x="869" y="385" class="name">LiveCoder</text><text x="939" y="385" class="chat">是的，稍后会落快照。</text><text x="869" y="416" class="name">KafkaFan</text><text x="938" y="416" class="chat">礼物链路支持幂等 👍</text>
+  <line x1="850" y1="465" x2="1146" y2="465" stroke="#eee"/><rect x="864" y="480" width="208" height="36" rx="8" fill="#f1f2f3"/><text x="877" y="502" class="small">发一条友善的弹幕吧</text><rect x="1072" y="480" width="58" height="36" rx="8" fill="#fb7299"/><text x="1089" y="502" class="white">发送</text>
+
+  <rect x="44" y="544" width="1102" height="88" rx="14" fill="#fff" stroke="#e8eaed"/><circle cx="74" cy="572" r="18" fill="url(#brand)"/><text x="99" y="572" class="h">LiveCoder</text><text x="99" y="591" class="small">在线 2.8k · 点赞 12.6k</text><circle cx="792" cy="575" r="22" fill="#fff0f4"/><text x="783" y="583" style="font:700 22px Inter,sans-serif;fill:#fb7299">♥</text>
+  <text x="838" y="568" class="small">礼物互动</text><text x="838" y="590" style="font:600 15px Inter,'Noto Sans SC',sans-serif;fill:#f0a000">🌸 花束</text><text x="920" y="590" style="font:600 15px Inter,'Noto Sans SC',sans-serif;fill:#f0a000">🚀 火箭</text><rect x="1049" y="561" width="72" height="34" rx="8" fill="#fb7299"/><text x="1071" y="583" class="white">赠送</text>
+</svg>

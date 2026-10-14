@@ -1,0 +1,21 @@
+{
+  "event_id": "dm-01JTEST000000000000000001",
+  "event_type": "danmaku.sent",
+  "room_id": 9,
+  "created_at": "2026-10-14T08:00:00Z",
+  "trace": {"traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"},
+  "payload": {
+    "message_id": "dm-01JTEST000000000000000001",
+    "room_id": 9,
+    "user_id": 10,
+    "nickname": "viewer",
+    "content": "hello",
+    "created_at": "2026-10-14T08:00:00Z",
+    "broadcasted": true,
+    "traffic_mode": "NORMAL",
+    "sample_rate": 1,
+    "estimated_fanout_per_sec": 120,
+    "future_optional": "old consumers must ignore this"
+  },
+  "future_envelope_field": "old consumers must ignore this"
+}

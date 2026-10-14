@@ -21,6 +21,6 @@ COPY --from=build /out/live-identity-room /usr/local/bin/live-identity-room
 COPY --from=build /out/live-worker /usr/local/bin/live-worker
 COPY --from=build /out/live-migrate /usr/local/bin/live-migrate
 COPY migrations /app/migrations
-COPY svg /app/svg
+COPY front_con/ava /app/front_con/ava
 USER 10001:10001
 CMD ["live-api"]

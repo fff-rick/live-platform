@@ -102,7 +102,7 @@ function leaveCurrentRoom(){
 }
 
 function userAvatar(user, className='avatar'){
-  const src=user?.avatar || '/svg/布偶.svg';
+  const src=user?.avatar || '/front_con/ava/布偶.svg';
   return `<img class="${className}" src="${esc(src)}" alt="${esc(user?.nickname||'用户')}的头像">`;
 }
 function header(){
@@ -279,7 +279,7 @@ function renderTopViewers(){
   const player=document.querySelector('.player'); if(!player)return;
   let box=document.getElementById('top-viewers');
   if(!box){ box=document.createElement('div'); box.id='top-viewers'; box.style.cssText='position:absolute;right:16px;top:14px;z-index:9;display:flex;align-items:center'; player.appendChild(box); }
-  box.innerHTML=state.topViewers.map((u,i)=>`<img title="${esc(u.nickname)}${i===0?' · 礼物榜首':''}" src="${esc(u.avatar||'/svg/布偶.svg')}" alt="${esc(u.nickname)}的头像" style="width:36px;height:36px;object-fit:cover;border-radius:50%;border:2px solid ${i===0?'#ffd76a':'#fff'};margin-left:${i?'-9px':'0'};background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35)">`).join('')+`<button id="viewer-bubble" style="margin-left:8px;border:0;border-radius:16px;background:rgba(0,0,0,.56);color:#fff;padding:7px 10px;font-size:12px">${fmtNum(state.stats.viewer_count)} 人</button>`;
+  box.innerHTML=state.topViewers.map((u,i)=>`<img title="${esc(u.nickname)}${i===0?' · 礼物榜首':''}" src="${esc(u.avatar||'/front_con/ava/布偶.svg')}" alt="${esc(u.nickname)}的头像" style="width:36px;height:36px;object-fit:cover;border-radius:50%;border:2px solid ${i===0?'#ffd76a':'#fff'};margin-left:${i?'-9px':'0'};background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.35)">`).join('')+`<button id="viewer-bubble" style="margin-left:8px;border:0;border-radius:16px;background:rgba(0,0,0,.56);color:#fff;padding:7px 10px;font-size:12px">${fmtNum(state.stats.viewer_count)} 人</button>`;
   document.getElementById('viewer-bubble')?.addEventListener('click',()=>loadOnlineViewers(state.room?.room_id));
 }
 async function loadTopViewers(roomID){
@@ -291,7 +291,7 @@ async function loadOnlineViewers(roomID){
   const player=document.querySelector('.player'); if(!player)return;
   document.getElementById('viewer-popover')?.remove();
   const pop=document.createElement('div');pop.id='viewer-popover';pop.style.cssText='position:absolute;right:16px;top:58px;z-index:10;width:220px;max-height:300px;overflow:auto;background:rgba(17,20,28,.96);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px;box-shadow:0 12px 30px rgba(0,0,0,.35);color:#fff';
-  pop.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px"><b>在线观众 ${state.onlineViewers.length}</b><button id="viewer-popover-close" style="border:0;background:transparent;color:#fff;font-size:18px">×</button></div>`+state.onlineViewers.map(u=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 2px"><img src="${esc(u.avatar||'/svg/布偶.svg')}" style="width:28px;height:28px;border-radius:50%;object-fit:cover"><span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.nickname)}</span></div>`).join(''); player.appendChild(pop);document.getElementById('viewer-popover-close')?.addEventListener('click',()=>pop.remove());
+  pop.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px"><b>在线观众 ${state.onlineViewers.length}</b><button id="viewer-popover-close" style="border:0;background:transparent;color:#fff;font-size:18px">×</button></div>`+state.onlineViewers.map(u=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 2px"><img src="${esc(u.avatar||'/front_con/ava/布偶.svg')}" style="width:28px;height:28px;border-radius:50%;object-fit:cover"><span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(u.nickname)}</span></div>`).join(''); player.appendChild(pop);document.getElementById('viewer-popover-close')?.addEventListener('click',()=>pop.remove());
 }
 async function loadGifts(){
   state.giftsState='loading'; state.giftsError='';

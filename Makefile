@@ -1,4 +1,4 @@
-.PHONY: run worker test test-contracts test-release-recorder record-release vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
+.PHONY: run worker test test-contracts test-boundaries test-release-recorder record-release vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
 
 run:
 	go run ./cmd/api
@@ -19,7 +19,12 @@ record-release:
 # Fast compatibility gate for the wire contracts that must stay stable during
 # the modular-monolith to microservices migration.
 test-contracts:
-	go test ./internal/mq ./internal/realtime ./internal/danmaku ./internal/gift
+	go test ./tests/contracts ./internal/mq ./internal/realtime ./internal/danmaku ./internal/gift
+
+# Freezes the current service-dependency debt with explicit allowlists. Later
+# migration phases remove allowlist entries as ownership becomes stricter.
+test-boundaries:
+	go test ./tests/boundaries
 
 vet:
 	go vet ./...

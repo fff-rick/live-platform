@@ -217,6 +217,9 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.banUser)))
 	s.mux.Handle("GET /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.listBans)))
 	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.identityOr(s.requireAuth(s.unbanUser)))
+	for _, pattern := range []string{"GET /internal/", "POST /internal/", "PUT /internal/", "PATCH /internal/", "DELETE /internal/"} {
+		s.mux.HandleFunc(pattern, http.NotFound)
+	}
 
 	// The user-facing SPA is served by the API process so local Docker Compose and
 	// Kubernetes ingress can use a single origin for HTTP APIs and WebSocket auth.
@@ -1238,6 +1241,7 @@ func requestID(log *slog.Logger, next http.Handler) http.Handler {
 		if id == "" {
 			id = idgen.New()
 		}
+		r.Header.Set("X-Request-ID", id)
 		w.Header().Set("X-Request-ID", id)
 		start := time.Now()
 		next.ServeHTTP(w, r)

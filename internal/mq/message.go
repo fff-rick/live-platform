@@ -76,6 +76,11 @@ func InjectTrace(raw []byte, ctx context.Context) []byte {
 	if json.Unmarshal(raw, &e) != nil {
 		return raw
 	}
+	// Producer is also used for DLQ records and replay. Only event envelopes may
+	// be rewritten; arbitrary valid JSON must remain byte-for-byte intact.
+	if strings.TrimSpace(e.EventID) == "" || strings.TrimSpace(e.EventType) == "" || e.CreatedAt.IsZero() || len(e.Payload) == 0 {
+		return raw
+	}
 	e.Trace = injectTraceMap(ctx)
 	out, err := json.Marshal(e)
 	if err != nil {

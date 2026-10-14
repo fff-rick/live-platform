@@ -1,6 +1,7 @@
 package mq
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -45,5 +46,12 @@ func TestValidateRoomEnvelopeRejectsInvalidContract(t *testing.T) {
 				t.Fatal("expected validation error")
 			}
 		})
+	}
+}
+
+func TestInjectTraceLeavesNonEnvelopeJSONUntouched(t *testing.T) {
+	raw := []byte(`{"source_topic":"live.gift.v1","value":"e30="}`)
+	if got := InjectTrace(raw, context.Background()); string(got) != string(raw) {
+		t.Fatalf("non-envelope JSON changed: got %s want %s", got, raw)
 	}
 }
