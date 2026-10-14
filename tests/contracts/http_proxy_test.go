@@ -47,7 +47,7 @@ func TestGatewayAndServicesKeepAuthenticationContractOverHTTP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer res.Body.Close()
+			defer func() { _ = res.Body.Close() }()
 			var body map[string]any
 			if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 				t.Fatal(err)
@@ -110,7 +110,7 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer res.Body.Close()
+			defer func() { _ = res.Body.Close() }()
 			var body map[string]any
 			if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 				t.Fatal(err)
