@@ -48,7 +48,7 @@ def _json_object(line: str) -> dict[str, object] | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record one Live Platform deployment")
+    parser = argparse.ArgumentParser(description="Record one LUMI LIVE deployment")
     parser.add_argument("--service", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--revision", required=True)
