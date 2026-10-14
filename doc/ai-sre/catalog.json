@@ -47,7 +47,7 @@
   {
     "source_id": "live-platform-runbook-http-5xx-v1",
     "path": "runbooks/http-5xx.md",
-    "title": "Live Platform HTTP 5xx investigation runbook",
+    "title": "LUMI LIVE HTTP 5xx investigation runbook",
     "document_type": "runbook",
     "version": "1.0",
     "source_ref": "repo://live-platform/doc/ai-sre/runbooks/http-5xx.md"
@@ -55,7 +55,7 @@
   {
     "source_id": "live-platform-runbook-outbox-kafka-v1",
     "path": "runbooks/outbox-kafka.md",
-    "title": "Live Platform Outbox and Kafka backlog runbook",
+    "title": "LUMI LIVE Outbox and Kafka backlog runbook",
     "document_type": "runbook",
     "version": "1.0",
     "source_ref": "repo://live-platform/doc/ai-sre/runbooks/outbox-kafka.md"
@@ -63,7 +63,7 @@
   {
     "source_id": "live-platform-runbook-database-pool-v1",
     "path": "runbooks/database-pool.md",
-    "title": "Live Platform MySQL connection pool runbook",
+    "title": "LUMI LIVE MySQL connection pool runbook",
     "document_type": "runbook",
     "version": "1.0",
     "source_ref": "repo://live-platform/doc/ai-sre/runbooks/database-pool.md"
@@ -71,7 +71,7 @@
   {
     "source_id": "live-platform-runbook-realtime-v1",
     "path": "runbooks/realtime-degradation.md",
-    "title": "Live Platform realtime degradation runbook",
+    "title": "LUMI LIVE realtime degradation runbook",
     "document_type": "runbook",
     "version": "1.0",
     "source_ref": "repo://live-platform/doc/ai-sre/runbooks/realtime-degradation.md"

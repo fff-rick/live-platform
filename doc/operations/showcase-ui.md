@@ -1,4 +1,4 @@
-# LiveFlow 展示界面
+# LUMI LIVE 展示界面
 
 面向用户的 Web 应用嵌入在 `live-api` 中，并通过 `/` 提供服务。
 

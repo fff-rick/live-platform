@@ -1,6 +1,6 @@
 {
   "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "注释与告警", "type": "dashboard"}]},
-  "description": "Live Platform 全链路监控：服务状态、HTTP、实时互动、MySQL、Redis、Kafka、Outbox 与 Go 进程资源。",
+  "description": "LUMI LIVE 全链路监控：服务状态、HTTP、实时互动、MySQL、Redis、Kafka、Outbox 与 Go 进程资源。",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -9,7 +9,7 @@
   "panels": [
     {"id": 1, "type": "row", "title": "服务状态", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "panels": []},
     {
-      "id": 2, "type": "stat", "title": "正常采集目标", "description": "Prometheus 当前能够成功抓取的 Live Platform 组件数量。预期共 9 个。", "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "id": 2, "type": "stat", "title": "正常采集目标", "description": "Prometheus 当前能够成功抓取的 LUMI LIVE 组件数量。预期共 9 个。", "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
       "targets": [{"refId": "A", "expr": "sum(up{job=~\"live-.*|centrifugo|mysql|redis|kafka\"})", "legendFormat": "正常目标"}],
       "fieldConfig": {"defaults": {"unit": "short", "min": 0, "max": 9, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 8}, {"color": "green", "value": 9}]}}, "overrides": []},
@@ -321,7 +321,7 @@
   "time": {"from": "now-30m", "to": "now"},
   "timepicker": {},
   "timezone": "browser",
-  "title": "Live Platform · 综合监控总览",
+  "title": "LUMI LIVE · 综合监控总览",
   "uid": "live-platform-overview",
   "version": 1,
   "weekStart": "monday"

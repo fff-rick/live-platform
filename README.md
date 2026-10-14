@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="logo/live-platform.png" alt="Live Platform Logo" width="150" />
+  <img src="front_con/logo/project.png" alt="LUMI LIVE" width="360" />
 </p>
 
 <p align="center">
-  <strong>Live Platform</strong><br/>
+  <strong>LUMI LIVE</strong><br/>
   高并发直播互动平台
 </p>
 
@@ -16,11 +16,11 @@
   <img src="https://img.shields.io/badge/Observability-Grafana-F46800?logo=grafana&logoColor=white" alt="Grafana" />
 </p>
 
-# Live Platform｜高并发直播互动平台
+# LUMI LIVE｜高并发直播互动平台
 
-Live Platform 是一个基于 **Go、Centrifugo、Redis、MySQL 和 Kafka** 的直播互动系统。它覆盖用户认证、开播与进房、实时弹幕、点赞聚合、礼物钱包、房主管理、在线观众和礼物榜，并提供压测、可观测性、故障演练与渐进式微服务拆分方案。
+LUMI LIVE 是一个基于 **Go、Centrifugo、Redis、MySQL 和 Kafka** 的直播互动系统。它覆盖用户认证、开播与进房、实时弹幕、点赞聚合、礼物钱包、房主管理、在线观众和礼物榜，并提供压测、可观测性、故障演练与渐进式微服务拆分方案。
 
-[![Live Platform 总体架构](front_con/demo/architecture.svg)](#怎么实现的)
+[![LUMI LIVE 总体架构](front_con/demo/architecture.svg)](#怎么实现的)
 
 <p align="center">
   <a href="#项目是什么">项目是什么</a> ·
@@ -35,7 +35,7 @@ Live Platform 是一个基于 **Go、Centrifugo、Redis、MySQL 和 Kafka** 的�
 
 ## 项目是什么
 
-传统直播 Demo 往往只演示 WebSocket 聊天，Live Platform 则把实时互动放回完整业务链路：用户先完成身份认证和进房鉴权，再通过 HTTP 发起业务命令、通过 WebSocket 接收实时事件；礼物扣款、订单和 Outbox 在同一 MySQL 事务中提交，异步归档与广播由 Kafka 和 Worker 接续完成。
+传统直播 Demo 往往只演示 WebSocket 聊天，LUMI LIVE 则把实时互动放回完整业务链路：用户先完成身份认证和进房鉴权，再通过 HTTP 发起业务命令、通过 WebSocket 接收实时事件；礼物扣款、订单和 Outbox 在同一 MySQL 事务中提交，异步归档与广播由 Kafka 和 Worker 接续完成。
 
 你可以在本地完成一轮完整体验：
 
@@ -52,7 +52,7 @@ Live Platform 是一个基于 **Go、Centrifugo、Redis、MySQL 和 Kafka** 的�
 
 内置 Web UI 由 `live-api` 直接提供，不需要额外启动前端工程。直播间把媒体流接入位、实时弹幕、礼物榜、在线观众、点赞、钱包和主播治理集中在同一页面。
 
-![LiveFlow 直播间界面能力示意](front_con/demo/live-room-preview.svg)
+![LUMI LIVE 直播间界面能力示意](front_con/demo/live-room-preview.svg)
 
 <p align="center"><sub>界面能力示意，对应仓库内置的实际 Web UI；媒体区域是明确的外部视频流接入位。</sub></p>
 
@@ -76,9 +76,9 @@ Live Platform 是一个基于 **Go、Centrifugo、Redis、MySQL 和 Kafka** 的�
 | **可观测、可压测** | 内置 Prometheus、Grafana、Tempo、Loki、OpenTelemetry 以及多场景 k6/故障演练脚本 |
 | **部署路径完整** | 支持 Docker Compose、本地 HA overlay、Kubernetes 清单与 Argo CD GitOps 入口 |
 
-## 为什么选择 Live Platform
+## 为什么选择 LUMI LIVE
 
-Live Platform 的重点不是模拟播放器，而是展示**高并发互动业务如何在一致性、实时性和可用性之间做工程取舍**。
+LUMI LIVE 的重点不是模拟播放器，而是展示**高并发互动业务如何在一致性、实时性和可用性之间做工程取舍**。
 
 - **链路真实**：送礼涉及余额校验、事务扣款、幂等订单、Outbox、Kafka 和实时投递，能够观察完整调用链。
 - **边界清晰**：互动平面与媒体平面分开；服务间通过版本化内部 API 协作，`live-interaction` 不直接访问身份服务的 MySQL 数据。
@@ -151,7 +151,7 @@ make compose-up
 
 | 服务 | 地址 | 用途 |
 | --- | --- | --- |
-| LiveFlow Web / API | [http://localhost:8080/](http://localhost:8080/) | 注册、开播、进房和互动 |
+| LUMI LIVE Web / API | [http://localhost:8080/](http://localhost:8080/) | 注册、开播、进房和互动 |
 | Centrifugo | [http://localhost:8000/](http://localhost:8000/) | WebSocket 实时接入 |
 | Worker 指标 | [http://localhost:19090/](http://localhost:19090/) | Worker 健康检查与指标 |
 | Prometheus | [http://localhost:19091/](http://localhost:19091/) | 指标查询 |
@@ -232,7 +232,7 @@ make k6-system-load       # 使用 k6 执行多场景系统联合压测
 
 ## 压测与可观测性
 
-Grafana 的 **Live Platform · 综合监控总览** 按服务状态、请求性能、直播互动、MySQL、Redis、Kafka/Outbox 和进程资源分区。Prometheus 抓取全部应用服务以及 Centrifugo、MySQL Exporter、Redis Exporter 和 Kafka Exporter；Trace 通过 OpenTelemetry Collector 写入 Tempo，容器日志经 Alloy 写入 Loki。
+Grafana 的 **LUMI LIVE · 综合监控总览** 按服务状态、请求性能、直播互动、MySQL、Redis、Kafka/Outbox 和进程资源分区。Prometheus 抓取全部应用服务以及 Centrifugo、MySQL Exporter、Redis Exporter 和 Kafka Exporter；Trace 通过 OpenTelemetry Collector 写入 Tempo，容器日志经 Alloy 写入 Loki。
 
 `make metrics-load` 会检查 API、Worker、Prometheus、Grafana 和 Centrifugo；环境未就绪时自动执行 `docker compose up -d --build`。随后它创建独立测试房间和用户，并发产生 HTTP、弹幕、点赞、礼物、治理、WebSocket、Kafka/Outbox 流量，最后通过 Prometheus API 验证看板依赖的指标。报告写入 `reports/metrics-load/<run_id>/`。
 
