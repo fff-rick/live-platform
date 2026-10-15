@@ -73,6 +73,13 @@ spec:
 ---
 apiVersion: v1
 kind: Service
+metadata: {name: live-query}
+spec:
+  selector: {app: live-query}
+  ports: [{name: http, port: 8084, targetPort: http}]
+---
+apiVersion: v1
+kind: Service
 metadata:
   name: live-worker-metrics
 spec:

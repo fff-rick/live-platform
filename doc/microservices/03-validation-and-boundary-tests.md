@@ -15,12 +15,13 @@
 make test-unit          # 包内业务逻辑
 make test-contracts     # HTTP / Kafka / WebSocket 契约
 make test-boundaries    # import、SQL、权限和网络边界
+make p2-db-boundaries   # Compose MySQL 真实账号越权拒绝
 make test-integration   # 真实 MySQL / Redis / Kafka / Centrifugo
 make test-fault         # 依赖超时、重启和故障注入
 make test-load          # 容量与回归门禁
 ```
 
-P0 已落地 `make test-contracts` 和 `make test-boundaries`，并已接入 CI。当前边界测试使用“已知例外允许列表”冻结现状：例如 Gateway 仍有本地业务依赖、Room 仍 JOIN `users`，所以它们通过 P0 门禁不代表已满足下表的最终目标。P1—P7 必须随拆分持续删减允许列表，直到相应 `ARCH-*` 零例外通过。
+P0 已落地 `make test-contracts` 和 `make test-boundaries`，并已接入 CI。P1 已删除 Gateway 本地业务依赖；P2 已删除 Room 对 `users` 的 JOIN 和 Commerce 对 Room Repository 的依赖，并用真实 MySQL 验证跨 schema 权限拒绝。P3—P7 继续删减 Redis、事件投影和部署层例外。
 
 P0 已自动化的 HTTP 基线包括 `HTTP-001`、`HTTP-003`、`HTTP-004`、`HTTP-008`；事件基线包括向后兼容 golden、永久错误 DLQ 元数据、原 key/payload 重放和操作人审计。需要真实依赖、故障注入或后续服务才能验证的编号仍是计划项。
 
@@ -28,7 +29,7 @@ P0 已自动化的 HTTP 基线包括 `HTTP-001`、`HTTP-003`、`HTTP-004`、`HTT
 
 | ID | 检查 | 通过条件 |
 | --- | --- | --- |
-| `ARCH-001` | Gateway import 边界 | `cmd/gateway` 不导入任何业务 Repository 或 `database/sql` |
+| `ARCH-001` | Gateway import 边界 | `cmd/api` 不导入任何业务 Repository 或 `database/sql` |
 | `ARCH-002` | Gateway 配置边界 | Gateway 配置结构中不存在 MySQL、Redis、Kafka、Centrifugo API Key |
 | `ARCH-003` | Commerce SQL 边界 | Commerce 源码不出现 `live_rooms`、`room_bans`、`room_mutes`、`users` |
 | `ARCH-004` | Interaction SQL 边界 | Interaction/Presence 不导入 `mysqlstore` 或任何业务 Repository |

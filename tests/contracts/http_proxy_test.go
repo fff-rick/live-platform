@@ -13,6 +13,7 @@ import (
 
 	"github.com/example/live-platform/internal/auth"
 	"github.com/example/live-platform/internal/commerceapi"
+	"github.com/example/live-platform/internal/gateway"
 	"github.com/example/live-platform/internal/httpapi"
 )
 
@@ -27,10 +28,14 @@ func TestGatewayAndServicesKeepAuthenticationContractOverHTTP(t *testing.T) {
 	t.Cleanup(interaction.Close)
 	t.Cleanup(commerce.Close)
 
-	gateway := httptest.NewServer(httpapi.New(httpapi.Deps{
-		Log: testLogger(), IdentityRoomURL: identity.URL, InteractionURL: interaction.URL, CommerceURL: commerce.URL,
-	}).Handler())
-	t.Cleanup(gateway.Close)
+	gatewayServer, err := gateway.New(gateway.Deps{
+		Log: testLogger(), IdentityRoomURL: identity.URL, InteractionURL: interaction.URL, CommerceURL: commerce.URL, QueryURL: identity.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(gatewayServer.Handler())
+	t.Cleanup(edge.Close)
 
 	cases := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/me"},
@@ -39,7 +44,7 @@ func TestGatewayAndServicesKeepAuthenticationContractOverHTTP(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			req, err := http.NewRequest(tc.method, gateway.URL+tc.path, nil)
+			req, err := http.NewRequest(tc.method, edge.URL+tc.path, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -60,7 +65,7 @@ func TestGatewayAndServicesKeepAuthenticationContractOverHTTP(t *testing.T) {
 }
 
 type observedRequest struct {
-	path, authorization, idempotencyKey, requestID, body string
+	path, authorization, idempotencyKey, requestID, userID, body string
 }
 
 func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
@@ -70,7 +75,7 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, _ := io.ReadAll(r.Body)
 			mu.Lock()
-			observed[name] = observedRequest{r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Request-ID"), string(raw)}
+			observed[name] = observedRequest{r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Request-ID"), r.Header.Get("X-User-ID"), string(raw)}
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
@@ -80,14 +85,20 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 	identity := upstream("identity", http.StatusConflict, "USERNAME_TAKEN")
 	interaction := upstream("interaction", http.StatusUnprocessableEntity, "SENSITIVE_CONTENT")
 	commerce := upstream("commerce", http.StatusTooManyRequests, "GIFT_RATE_LIMITED")
+	query := upstream("query", http.StatusServiceUnavailable, "STATS_UNAVAILABLE")
 	t.Cleanup(identity.Close)
 	t.Cleanup(interaction.Close)
 	t.Cleanup(commerce.Close)
+	t.Cleanup(query.Close)
 
-	gateway := httptest.NewServer(httpapi.New(httpapi.Deps{
-		Log: testLogger(), IdentityRoomURL: identity.URL, InteractionURL: interaction.URL, CommerceURL: commerce.URL,
-	}).Handler())
-	t.Cleanup(gateway.Close)
+	gatewayServer, err := gateway.New(gateway.Deps{
+		Log: testLogger(), IdentityRoomURL: identity.URL, InteractionURL: interaction.URL, CommerceURL: commerce.URL, QueryURL: query.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edge := httptest.NewServer(gatewayServer.Handler())
+	t.Cleanup(edge.Close)
 
 	cases := []struct {
 		name, path, body, code string
@@ -96,16 +107,22 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 		{"identity", "/api/v1/auth/register", `{"username":"same"}`, "USERNAME_TAKEN", http.StatusConflict},
 		{"interaction", "/api/v1/rooms/9/danmaku", `{"content":"blocked"}`, "SENSITIVE_CONTENT", http.StatusUnprocessableEntity},
 		{"commerce", "/api/v1/rooms/9/gifts", `{"gift_id":1,"count":1}`, "GIFT_RATE_LIMITED", http.StatusTooManyRequests},
+		{"query", "/api/v1/rooms/9/stats", `{"unused":true}`, "STATS_UNAVAILABLE", http.StatusServiceUnavailable},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodPost, gateway.URL+tc.path, bytes.NewBufferString(tc.body))
+			method := http.MethodPost
+			if tc.name == "query" {
+				method = http.MethodGet
+			}
+			req, err := http.NewRequest(method, edge.URL+tc.path, bytes.NewBufferString(tc.body))
 			if err != nil {
 				t.Fatal(err)
 			}
 			req.Header.Set("Authorization", "Bearer opaque-contract-token")
 			req.Header.Set("Idempotency-Key", "idem-1")
 			req.Header.Set("X-Request-ID", "request-contract-1")
+			req.Header.Set("X-User-ID", "forged")
 			res, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +138,7 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 			mu.Lock()
 			got := observed[tc.name]
 			mu.Unlock()
-			if got.path != tc.path || got.authorization != "Bearer opaque-contract-token" || got.idempotencyKey != "idem-1" || got.requestID != "request-contract-1" || got.body != tc.body {
+			if got.path != tc.path || got.authorization != "Bearer opaque-contract-token" || got.idempotencyKey != "idem-1" || got.requestID != "request-contract-1" || got.userID != "" || got.body != tc.body {
 				t.Fatalf("upstream request changed: %+v", got)
 			}
 		})
@@ -129,10 +146,16 @@ func TestGatewayPreservesUpstreamHTTPContract(t *testing.T) {
 }
 
 func TestGatewayDoesNotExposeInternalRoutes(t *testing.T) {
-	gateway := httpapi.New(httpapi.Deps{Log: testLogger()}).Handler()
+	server, err := gateway.New(gateway.Deps{
+		Log: testLogger(), IdentityRoomURL: "http://127.0.0.1:1", InteractionURL: "http://127.0.0.1:1",
+		CommerceURL: "http://127.0.0.1:1", QueryURL: "http://127.0.0.1:1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/users/1", nil)
 	res := httptest.NewRecorder()
-	gateway.ServeHTTP(res, req)
+	server.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusNotFound {
 		t.Fatalf("status=%d want 404", res.Code)
 	}

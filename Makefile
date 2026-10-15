@@ -1,7 +1,10 @@
-.PHONY: run worker test test-contracts test-boundaries test-release-recorder record-release vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
+.PHONY: run query worker test test-contracts test-boundaries test-release-recorder record-release vet fmt compose-up compose-down compose-reset smoke-m2 smoke-m3 smoke-m4 smoke-m5 smoke-m6 test-m4-concurrency test-m5-kafka-recovery metrics-load k6-system-load
 
 run:
 	go run ./cmd/api
+
+query:
+	go run ./cmd/query
 
 worker:
 	go run ./cmd/worker
@@ -132,9 +135,12 @@ m7-gift-dbpool-ab:
 m7-gift-1000-wallet-capacity:
 	./scripts/m7_gift_1000_wallet_capacity.sh
 
-.PHONY: migrate smoke-m8 m8-k8s-validate gitops-demo-preflight phase1-k8s-validate
+.PHONY: migrate p2-db-boundaries smoke-m8 m8-k8s-validate gitops-demo-preflight phase1-k8s-validate
 migrate:
 	go run ./cmd/migrate
+
+p2-db-boundaries:
+	./scripts/p2_db_boundaries.sh
 
 smoke-m8:
 	./scripts/m8_smoke.sh

@@ -78,11 +78,13 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka-1:19092 --create --if-not-exists --topic live.gift.v1 --partitions 6 --replication-factor 3 --config min.insync.replicas=2
 
   live-api:
+    restart: unless-stopped
+  live-commerce:
     environment: &ha-app-env
       KAFKA_BROKERS: kafka-1:19092,kafka-2:19092,kafka-3:19092
       CENTRIFUGO_API_URL: http://centrifugo-gateway:8000/api
     restart: unless-stopped
-  live-commerce:
+  live-query:
     environment: *ha-app-env
     restart: unless-stopped
   live-interaction:

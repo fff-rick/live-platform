@@ -10,13 +10,16 @@
 
 `live-platform-runtime` 必须包含以下键：
 
-- `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MYSQL_DSN`
+- `MYSQL_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`MIGRATION_MYSQL_DSN`
+- `IDENTITY_MYSQL_DSN`、`ROOM_MYSQL_DSN`、`COMMERCE_MYSQL_DSN`、`ARCHIVE_MYSQL_DSN`
+- `QUERY_MYSQL_DSN`（只读）与 `QUERY_WRITER_MYSQL_DSN`
+- 五个 schema 各自的 `*_MYSQL_APP_PASSWORD`、`*_MYSQL_MIGRATION_PASSWORD`、`*_MYSQL_AUDIT_PASSWORD`
 - `CENTRIFUGO_API_KEY`、`CENTRIFUGO_TOKEN_SECRET`、`AUTH_JWT_SECRET`
 
-`MYSQL_DSN` 必须连接集群内的 MySQL Service，例如：
+每个 DSN 必须连接集群内的 MySQL Service；应用 Pod 只注入自己拥有的 DSN。例如：
 
 ```text
-live:<password>@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4
+live_commerce_app:<password>@tcp(mysql:3306)/commerce?parseTime=true&charset=utf8mb4
 ```
 
 已检查的集群中，Sealed Secrets Controller 的名称为 `sealed-secrets-controller`，命名空间为 `kube-system`，版本为 `0.27.3`。仓库根目录中的 `sealed-secrets-cert.pem` 是该集群的公钥。请在本地准备包含上述键的 `deploy/k8s/runtime.env` 文件（不要提交），然后执行：

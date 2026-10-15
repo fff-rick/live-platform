@@ -48,25 +48,31 @@ func main() {
 	defer shutdownTracing(log, traceShutdown)
 	metrics := observability.NewMetrics("live-worker")
 
-	needsMySQL := roles["outbox"] || roles["gift-consumer"] || roles["danmaku-consumer"] || roles["like-snapshot"]
 	needsRedis := roles["stats"] || roles["like-snapshot"]
 	needsPublisher := roles["stats"] || roles["gift-consumer"]
 
-	var mysql *mysqlstore.Store
-	if needsMySQL {
-		mysql, err = mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{
-			MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime,
-		})
-		if err != nil {
-			log.Error("open mysql", "error", err)
+	pool := mysqlstore.Config{MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime}
+	openStore := func(name, dsn string) *mysqlstore.Store {
+		store, openErr := mysqlstore.Open(dsn, pool)
+		if openErr != nil {
+			log.Error("open mysql", "database", name, "error", openErr)
 			os.Exit(1)
 		}
-		defer func() {
-			if closeErr := mysql.Close(); closeErr != nil {
-				log.Error("close mysql", "error", closeErr)
-			}
-		}()
-		metrics.RegisterDBPool("mysql", mysql.Stats)
+		metrics.RegisterDBPool(name, store.Stats)
+		return store
+	}
+	var commerceDB, archiveDB, queryDB *mysqlstore.Store
+	if roles["outbox"] {
+		commerceDB = openStore("commerce-mysql", cfg.Databases.CommerceDSN)
+		defer func() { _ = commerceDB.Close() }()
+	}
+	if roles["gift-consumer"] || roles["danmaku-consumer"] {
+		archiveDB = openStore("archive-mysql", cfg.Databases.ArchiveDSN)
+		defer func() { _ = archiveDB.Close() }()
+	}
+	if roles["like-snapshot"] {
+		queryDB = openStore("query-mysql", cfg.Databases.QueryWriterDSN)
+		defer func() { _ = queryDB.Close() }()
 	}
 
 	var redis *redisstore.Store
@@ -115,7 +121,7 @@ func main() {
 		run("stats-aggregator", aggregator.Run)
 	}
 	if roles["like-snapshot"] {
-		checkpoints := like.NewMySQLCheckpointStore(mysql)
+		checkpoints := like.NewMySQLCheckpointStore(queryDB)
 		snapshotter := like.NewSnapshotter(log, redis, checkpoints, cfg.Engagement.LikeSnapshotInterval, cfg.Engagement.ActiveRoomWindow, cfg.Engagement.ActiveRoomBatch)
 		run("like-snapshot", snapshotter.Run)
 	}
@@ -129,7 +135,7 @@ func main() {
 		}
 		defer kafkaProducer.Close()
 		if roles["outbox"] {
-			outboxRepo := outbox.NewRepository(mysql)
+			outboxRepo := outbox.NewRepository(commerceDB)
 			outboxPublisher := outbox.NewPublisher(log, outboxRepo, kafkaProducer, "worker-"+idgen.New(), cfg.Outbox.PollInterval, cfg.Outbox.BatchSize, cfg.Outbox.Lease, cfg.Outbox.ProduceTimeout, metrics)
 			run("outbox-publisher", outboxPublisher.Run)
 		}
@@ -145,7 +151,7 @@ func main() {
 		}
 		giftConsumer.WithDeadLetterWriter(dlqWriter)
 		defer giftConsumer.Close()
-		dedup := eventdedup.NewStore(mysql)
+		dedup := eventdedup.NewStore(archiveDB)
 		giftHandler := gift.NewConsumerHandler(cfg.Kafka.GiftConsumerGroup, dedup, publisher, cfg.Kafka.ConsumerLease)
 		run("gift-consumer", func(ctx context.Context) error { return giftConsumer.Run(ctx, giftHandler) })
 	}
@@ -159,7 +165,7 @@ func main() {
 		}
 		danmakuConsumer.WithDeadLetterWriter(dlqWriter)
 		defer danmakuConsumer.Close()
-		danmakuHandler := danmaku.NewPersistenceHandler(mysql, log)
+		danmakuHandler := danmaku.NewPersistenceHandler(archiveDB, log)
 		run("danmaku-consumer", func(ctx context.Context) error { return danmakuConsumer.Run(ctx, danmakuHandler) })
 	}
 

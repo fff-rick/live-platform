@@ -3,15 +3,12 @@ package httpapi
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -19,7 +16,6 @@ import (
 
 	"github.com/example/live-platform/internal/auth"
 	"github.com/example/live-platform/internal/danmaku"
-	"github.com/example/live-platform/internal/gift"
 	"github.com/example/live-platform/internal/idgen"
 	"github.com/example/live-platform/internal/like"
 	"github.com/example/live-platform/internal/observability"
@@ -28,8 +24,6 @@ import (
 	"github.com/example/live-platform/internal/stats"
 	cftoken "github.com/example/live-platform/internal/token"
 	"github.com/example/live-platform/internal/viewer"
-	"github.com/example/live-platform/internal/wallet"
-	"github.com/example/live-platform/webui"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -48,52 +42,47 @@ type HistoryStore interface {
 }
 
 type Server struct {
-	log          *slog.Logger
-	mysql        Pinger
-	history      HistoryStore
-	redis        Pinger
-	centrifugo   RealtimeController
-	governance   GovernanceStore
-	metrics      *observability.Metrics
-	auth         *auth.Service
-	appTokens    *auth.TokenManager
-	cfTokens     *cftoken.Issuer
-	cfSubTTL     time.Duration
-	rooms        RoomAPI
-	danmaku      *danmaku.Service
-	likes        *like.Service
-	viewers      *viewer.Service
-	stats        *stats.Service
-	gifts        *gift.Service
-	wallet       *wallet.Service
-	commerce     http.Handler
-	interaction  http.Handler
-	identityRoom http.Handler
-	mux          *http.ServeMux
+	log        *slog.Logger
+	mysql      Pinger
+	history    HistoryStore
+	redis      Pinger
+	centrifugo RealtimeController
+	governance GovernanceStore
+	metrics    *observability.Metrics
+	auth       *auth.Service
+	profiles   UserReader
+	appTokens  *auth.TokenManager
+	cfTokens   *cftoken.Issuer
+	cfSubTTL   time.Duration
+	rooms      RoomAPI
+	danmaku    *danmaku.Service
+	likes      *like.Service
+	viewers    *viewer.Service
+	stats      *stats.Service
+	mux        *http.ServeMux
 }
 
 type Deps struct {
-	Log             *slog.Logger
-	MySQL           Pinger
-	History         HistoryStore
-	Redis           Pinger
-	Centrifugo      RealtimeController
-	Governance      GovernanceStore
-	Metrics         *observability.Metrics
-	Auth            *auth.Service
-	AppTokens       *auth.TokenManager
-	CFTokens        *cftoken.Issuer
-	CFSubTTL        time.Duration
-	Rooms           RoomAPI
-	Danmaku         *danmaku.Service
-	Likes           *like.Service
-	Viewers         *viewer.Service
-	Stats           *stats.Service
-	Gifts           *gift.Service
-	Wallet          *wallet.Service
-	CommerceURL     string
-	InteractionURL  string
-	IdentityRoomURL string
+	Log        *slog.Logger
+	MySQL      Pinger
+	History    HistoryStore
+	Redis      Pinger
+	Centrifugo RealtimeController
+	Governance GovernanceStore
+	Metrics    *observability.Metrics
+	Auth       *auth.Service
+	Profiles   UserReader
+	AppTokens  *auth.TokenManager
+	CFTokens   *cftoken.Issuer
+	CFSubTTL   time.Duration
+	Rooms      RoomAPI
+	Danmaku    *danmaku.Service
+	Likes      *like.Service
+	Viewers    *viewer.Service
+	Stats      *stats.Service
+}
+type UserReader interface {
+	User(context.Context, int64) (auth.User, error)
 }
 type RoomAPI interface {
 	Create(context.Context, int64, string) (room.Room, error)
@@ -113,136 +102,12 @@ type RoomAPI interface {
 	ListBans(context.Context, int64, int64) ([]room.Ban, error)
 }
 
-func New(d Deps) *Server {
-	s := &Server{
-		log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, centrifugo: d.Centrifugo, governance: d.Governance, metrics: d.Metrics, auth: d.Auth, appTokens: d.AppTokens,
-		cfTokens: d.CFTokens, cfSubTTL: d.CFSubTTL, rooms: d.Rooms, danmaku: d.Danmaku,
-		likes: d.Likes, viewers: d.Viewers, stats: d.Stats, gifts: d.Gifts, wallet: d.Wallet, mux: http.NewServeMux(),
-	}
-	if s.governance == nil {
-		if governance, ok := d.Redis.(GovernanceStore); ok {
-			s.governance = governance
-		}
-	}
-	if raw := strings.TrimSpace(d.CommerceURL); raw != "" {
-		target, err := url.Parse(raw)
-		if err == nil && target.Scheme != "" && target.Host != "" {
-			proxy := httputil.NewSingleHostReverseProxy(target)
-			proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-				s.log.Error("commerce proxy failed", "error", err)
-				writeError(w, http.StatusBadGateway, "COMMERCE_UNAVAILABLE", "commerce service unavailable")
-			}
-			s.commerce = proxy
-		} else {
-			s.log.Warn("invalid COMMERCE_BASE_URL; using local commerce handlers", "value", raw, "error", err)
-		}
-	}
-	if raw := strings.TrimSpace(d.InteractionURL); raw != "" {
-		target, err := url.Parse(raw)
-		if err == nil && target.Scheme != "" && target.Host != "" {
-			proxy := httputil.NewSingleHostReverseProxy(target)
-			proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-				s.log.Error("interaction proxy failed", "error", err)
-				writeError(w, http.StatusBadGateway, "INTERACTION_UNAVAILABLE", "interaction service unavailable")
-			}
-			s.interaction = proxy
-		} else {
-			s.log.Warn("invalid INTERACTION_BASE_URL; using local interaction handlers", "value", raw, "error", err)
-		}
-	}
-	if raw := strings.TrimSpace(d.IdentityRoomURL); raw != "" {
-		target, err := url.Parse(raw)
-		if err == nil && target.Scheme != "" && target.Host != "" {
-			p := httputil.NewSingleHostReverseProxy(target)
-			p.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, err error) {
-				s.log.Error("identity-room proxy failed", "error", err)
-				writeError(w, http.StatusBadGateway, "IDENTITY_ROOM_UNAVAILABLE", "identity-room service unavailable")
-			}
-			s.identityRoom = p
-		} else {
-			s.log.Warn("invalid IDENTITY_ROOM_BASE_URL; using local identity-room handlers", "value", raw, "error", err)
-		}
-	}
-	s.routes()
-	return s
-}
-
-func (s *Server) Handler() http.Handler {
+func (s *Server) handler(service string) http.Handler {
 	base := requestID(s.log, recoverer(s.log, s.mux))
 	if s.metrics != nil {
-		base = s.metrics.HTTPMiddleware("live-api", base)
+		base = s.metrics.HTTPMiddleware(service, base)
 	}
 	return observability.TraceHTTP(base)
-}
-
-//go:embed demo.html
-var demoFS embed.FS
-
-func (s *Server) routes() {
-	s.mux.HandleFunc("GET /health", s.health)
-	s.mux.HandleFunc("GET /ready", s.ready)
-	if s.metrics != nil {
-		s.mux.Handle("GET /metrics", s.metrics.Handler())
-	}
-	s.mux.HandleFunc("GET /demo", s.demo)
-
-	s.mux.Handle("POST /api/v1/auth/register", s.identityOr(http.HandlerFunc(s.register)))
-	s.mux.Handle("POST /api/v1/auth/login", s.identityOr(http.HandlerFunc(s.login)))
-	s.mux.Handle("GET /api/v1/me", s.identityOr(s.requireAuth(s.me)))
-	s.mux.Handle("POST /api/v1/realtime/token", s.identityOr(s.requireAuth(s.realtimeToken)))
-
-	s.mux.Handle("POST /api/v1/rooms", s.identityOr(s.requireAuth(s.createRoom)))
-	s.mux.Handle("GET /api/v1/rooms", s.identityOr(http.HandlerFunc(s.listRooms)))
-	s.mux.Handle("GET /api/v1/rooms/{room_id}", s.identityOr(http.HandlerFunc(s.getRoom)))
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/messages", s.roomMessages)
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/top-viewers", s.topViewers)
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/viewers", s.roomViewers)
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/start", s.identityOr(s.requireAuth(s.startRoom)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/stop", s.identityOr(s.requireAuth(s.stopRoom)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/join", s.interactionOr(s.requireAuth(s.joinRoom)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/leave", s.interactionOr(s.requireAuth(s.leaveRoom)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/danmaku", s.interactionOr(s.requireAuth(s.sendDanmaku)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/like", s.interactionOr(s.requireAuth(s.likeRoom)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/heartbeat", s.interactionOr(s.requireAuth(s.heartbeatRoom)))
-	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/stats", s.roomStats)
-	s.mux.Handle("GET /api/v1/gifts", s.commerceOr(http.HandlerFunc(s.listGifts)))
-	s.mux.Handle("GET /api/v1/wallet", s.commerceOr(s.requireAuth(s.walletBalance)))
-	s.mux.Handle("GET /api/v1/wallet/transactions", s.commerceOr(s.requireAuth(s.walletTransactions)))
-	s.mux.Handle("POST /api/v1/wallet/dev-credit", s.commerceOr(s.requireAuth(s.devWalletCredit)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/gifts", s.commerceOr(s.requireAuth(s.sendGift)))
-	s.mux.Handle("GET /api/v1/gift-orders/{order_no}", s.commerceOr(s.requireAuth(s.giftOrder)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/mutes", s.identityOr(s.requireAuth(s.muteUser)))
-	s.mux.Handle("GET /api/v1/rooms/{room_id}/mutes", s.identityOr(s.requireAuth(s.listMutes)))
-	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/mutes/{user_id}", s.identityOr(s.requireAuth(s.unmuteUser)))
-	s.mux.Handle("POST /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.banUser)))
-	s.mux.Handle("GET /api/v1/rooms/{room_id}/bans", s.identityOr(s.requireAuth(s.listBans)))
-	s.mux.Handle("DELETE /api/v1/rooms/{room_id}/bans/{user_id}", s.identityOr(s.requireAuth(s.unbanUser)))
-	for _, pattern := range []string{"GET /internal/", "POST /internal/", "PUT /internal/", "PATCH /internal/", "DELETE /internal/"} {
-		s.mux.HandleFunc(pattern, http.NotFound)
-	}
-
-	// The user-facing SPA is served by the API process so local Docker Compose and
-	// Kubernetes ingress can use a single origin for HTTP APIs and WebSocket auth.
-	s.mux.Handle("GET /", webui.Handler())
-}
-
-func (s *Server) commerceOr(local http.Handler) http.Handler {
-	if s.commerce != nil {
-		return s.commerce
-	}
-	return local
-}
-func (s *Server) interactionOr(local http.Handler) http.Handler {
-	if s.interaction != nil {
-		return s.interaction
-	}
-	return local
-}
-func (s *Server) identityOr(local http.Handler) http.Handler {
-	if s.identityRoom != nil {
-		return s.identityRoom
-	}
-	return local
 }
 
 // NewInteraction exposes the Stage 3 high-frequency write routes only. It
@@ -260,7 +125,7 @@ func NewInteraction(d Deps) http.Handler {
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/danmaku", s.requireAuth(s.sendDanmaku))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/like", s.requireAuth(s.likeRoom))
 	s.mux.HandleFunc("POST /api/v1/rooms/{room_id}/heartbeat", s.requireAuth(s.heartbeatRoom))
-	return s.Handler()
+	return s.handler("live-interaction")
 }
 
 // NewIdentityRoom is the Stage 4 owner for identity, room lifecycle and
@@ -339,7 +204,24 @@ func NewIdentityRoom(d Deps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, v)
 	})
-	return s.Handler()
+	return s.handler("live-identity-room")
+}
+
+// NewQuery owns the read routes that previously forced live-api to connect to
+// MySQL and Redis. P2 replaces these transitional source-table reads with a
+// dedicated read model and read-only credentials.
+func NewQuery(d Deps) http.Handler {
+	s := &Server{log: d.Log, mysql: d.MySQL, history: d.History, redis: d.Redis, metrics: d.Metrics, profiles: d.Profiles, viewers: d.Viewers, stats: d.Stats, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /health", s.health)
+	s.mux.HandleFunc("GET /ready", s.ready)
+	if s.metrics != nil {
+		s.mux.Handle("GET /metrics", s.metrics.Handler())
+	}
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/messages", s.roomMessages)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/top-viewers", s.topViewers)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/viewers", s.roomViewers)
+	s.mux.HandleFunc("GET /api/v1/rooms/{room_id}/stats", s.roomStats)
+	return s.handler("live-query")
 }
 
 func (s *Server) topViewers(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +236,7 @@ func (s *Server) topViewers(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
-		u, err := s.auth.User(r.Context(), id)
+		u, err := s.profiles.User(r.Context(), id)
 		if err == nil {
 			items = append(items, map[string]any{"user_id": u.ID, "nickname": u.Nickname, "avatar": u.Avatar})
 		}
@@ -374,7 +256,7 @@ func (s *Server) roomViewers(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
-		if u, err := s.auth.User(r.Context(), id); err == nil {
+		if u, err := s.profiles.User(r.Context(), id); err == nil {
 			items = append(items, map[string]any{"user_id": u.ID, "nickname": u.Nickname, "avatar": u.Avatar})
 		}
 	}
@@ -412,15 +294,10 @@ func (s *Server) roomMessages(w http.ResponseWriter, r *http.Request) {
 		limit = v
 	}
 	rows, err := s.history.QueryContext(r.Context(), `
-SELECT * FROM (
-  SELECT 'danmaku' AS type, d.message_id, d.room_id, d.user_id, d.nickname, d.content, '' AS gift_name, 0 AS gift_count, d.created_at, d.id AS sequence
-  FROM danmaku_records d WHERE d.room_id=?
-  UNION ALL
-  SELECT 'gift' AS type, CONCAT('gift:', o.order_no), o.room_id, o.user_id, u.nickname, '' AS content, g.name, o.gift_count, o.created_at, o.id AS sequence
-  FROM gift_orders o JOIN users u ON u.id=o.user_id JOIN gifts g ON g.id=o.gift_id
-  WHERE o.room_id=? AND o.status=1
-) AS room_messages
-ORDER BY created_at DESC, sequence DESC LIMIT ?`, roomID, roomID, limit)
+SELECT type, message_id, room_id, user_id, nickname, content, gift_name, gift_count, created_at, sequence
+FROM room_message_feed
+WHERE room_id=?
+ORDER BY created_at DESC, sequence DESC LIMIT ?`, roomID, limit)
 	if err != nil {
 		s.log.Error("load room messages", "error", err, "room_id", roomID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load message history")
@@ -445,16 +322,6 @@ ORDER BY created_at DESC, sequence DESC LIMIT ?`, roomID, roomID, limit)
 		items[left], items[right] = items[right], items[left]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) demo(w http.ResponseWriter, _ *http.Request) {
-	b, err := demoFS.ReadFile("demo.html")
-	if err != nil {
-		http.Error(w, "demo unavailable", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(b)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -862,158 +729,6 @@ func (s *Server) roomStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("get room stats failed", "error", err, "room_id", roomID)
 		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "room stats unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-func (s *Server) listGifts(w http.ResponseWriter, r *http.Request) {
-	items, err := s.gifts.List(r.Context())
-	if err != nil {
-		s.log.Error("list gifts failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list gifts")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) walletBalance(w http.ResponseWriter, r *http.Request, userID int64) {
-	v, err := s.wallet.Balance(r.Context(), userID)
-	if err != nil {
-		s.log.Error("wallet balance failed", "error", err, "user_id", userID)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load wallet")
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-func (s *Server) walletTransactions(w http.ResponseWriter, r *http.Request, userID int64) {
-	items, err := s.wallet.Transactions(r.Context(), userID)
-	if err != nil {
-		s.log.Error("wallet transactions failed", "error", err, "user_id", userID)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load wallet transactions")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-type walletCreditRequest struct {
-	Amount int64 `json:"amount"`
-}
-
-func (s *Server) devWalletCredit(w http.ResponseWriter, r *http.Request, userID int64) {
-	var in walletCreditRequest
-	if err := decodeJSON(w, r, 8<<10, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	v, err := s.wallet.DevCredit(r.Context(), userID, in.Amount)
-	if err != nil {
-		switch {
-		case errors.Is(err, wallet.ErrCreditDisabled):
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint is disabled")
-		case errors.Is(err, wallet.ErrInvalidCredit):
-			writeError(w, http.StatusBadRequest, "INVALID_CREDIT_AMOUNT", err.Error())
-		default:
-			s.log.Error("dev wallet credit failed", "error", err, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to credit wallet")
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-type giftRequest struct {
-	GiftID int64 `json:"gift_id"`
-	Count  int64 `json:"count"`
-}
-
-func (s *Server) sendGift(w http.ResponseWriter, r *http.Request, userID int64) {
-	roomID, ok := pathInt64(w, r, "room_id")
-	if !ok {
-		return
-	}
-	requestID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if requestID == "" {
-		if s.metrics != nil {
-			s.metrics.GiftOrders.WithLabelValues("rejected").Inc()
-		}
-		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required")
-		return
-	}
-	var in giftRequest
-	if err := decodeJSON(w, r, 8<<10, &in); err != nil || in.GiftID <= 0 {
-		if s.metrics != nil {
-			s.metrics.GiftOrders.WithLabelValues("rejected").Inc()
-		}
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "valid gift_id and count are required")
-		return
-	}
-	result, err := s.gifts.Send(r.Context(), roomID, userID, in.GiftID, in.Count, requestID)
-	if err != nil {
-		if s.metrics != nil {
-			result := "failed"
-			if errors.Is(err, gift.ErrInvalidCount) || errors.Is(err, gift.ErrInvalidRequestID) || errors.Is(err, gift.ErrGiftNotFound) || errors.Is(err, gift.ErrGiftOffline) || errors.Is(err, gift.ErrInsufficientBalance) || errors.Is(err, gift.ErrIdempotencyConflict) || errors.Is(err, gift.ErrRateLimited) || errors.Is(err, room.ErrNotFound) || errors.Is(err, room.ErrNotLiving) || errors.Is(err, room.ErrBanned) {
-				result = "rejected"
-			}
-			if errors.Is(err, gift.ErrRateLimited) {
-				s.metrics.GiftRateLimited.Inc()
-			}
-			s.metrics.GiftOrders.WithLabelValues(result).Inc()
-		}
-		switch {
-		case errors.Is(err, gift.ErrInvalidCount):
-			writeError(w, http.StatusBadRequest, "INVALID_GIFT_COUNT", err.Error())
-		case errors.Is(err, gift.ErrInvalidRequestID):
-			writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", err.Error())
-		case errors.Is(err, gift.ErrGiftNotFound):
-			writeError(w, http.StatusNotFound, "GIFT_NOT_FOUND", err.Error())
-		case errors.Is(err, gift.ErrGiftOffline):
-			writeError(w, http.StatusConflict, "GIFT_OFFLINE", err.Error())
-		case errors.Is(err, gift.ErrInsufficientBalance):
-			writeError(w, http.StatusConflict, "INSUFFICIENT_BALANCE", err.Error())
-		case errors.Is(err, gift.ErrIdempotencyConflict):
-			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err.Error())
-		case errors.Is(err, gift.ErrRateLimited):
-			writeError(w, http.StatusTooManyRequests, "GIFT_RATE_LIMITED", err.Error())
-		case errors.Is(err, room.ErrNotFound), errors.Is(err, room.ErrNotLiving), errors.Is(err, room.ErrBanned):
-			handleRoomError(w, err)
-		default:
-			s.log.Error("send gift failed", "error", err, "room_id", roomID, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "GIFT_FAILED", "failed to send gift")
-		}
-		return
-	}
-	if result.EventQueued {
-		_ = s.viewers.AddGiftValue(r.Context(), roomID, userID, result.Order.TotalAmount)
-	}
-	if s.metrics != nil {
-		metricResult := "success"
-		if result.IdempotentReplay {
-			metricResult = "replay"
-		}
-		s.metrics.GiftOrders.WithLabelValues(metricResult).Inc()
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) giftOrder(w http.ResponseWriter, r *http.Request, userID int64) {
-	orderNo := strings.TrimSpace(r.PathValue("order_no"))
-	if len(orderNo) < 2 || len(orderNo) > 64 {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid order_no")
-		return
-	}
-	v, err := s.gifts.Order(r.Context(), orderNo, userID)
-	if err != nil {
-		switch {
-		case errors.Is(err, gift.ErrOrderNotFound):
-			writeError(w, http.StatusNotFound, "GIFT_ORDER_NOT_FOUND", err.Error())
-		case errors.Is(err, gift.ErrOrderForbidden):
-			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
-		default:
-			s.log.Error("get gift order failed", "error", err, "order_no", orderNo, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load gift order")
-		}
 		return
 	}
 	writeJSON(w, http.StatusOK, v)

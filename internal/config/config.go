@@ -13,7 +13,9 @@ type Config struct {
 	Commerce      CommerceConfig
 	Interaction   InteractionConfig
 	IdentityRoom  IdentityRoomConfig
+	Query         QueryConfig
 	MySQL         MySQLConfig
+	Databases     DatabaseConfig
 	Redis         RedisConfig
 	Centrifugo    CentrifugoConfig
 	Auth          AuthConfig
@@ -31,6 +33,15 @@ type Config struct {
 
 type HTTPConfig struct{ Addr string }
 
+type GatewayConfig struct {
+	HTTP          HTTPConfig
+	Commerce      CommerceConfig
+	Interaction   InteractionConfig
+	IdentityRoom  IdentityRoomConfig
+	Query         QueryConfig
+	Observability ObservabilityConfig
+}
+
 // CommerceConfig keeps the public routing switch separate from the commerce
 // process listener. An empty BaseURL leaves live-api on the local fallback,
 // allowing a route-by-route rollback during the Stage 2 migration.
@@ -46,11 +57,19 @@ type InteractionConfig struct {
 	BaseURL  string
 }
 type IdentityRoomConfig struct{ HTTPAddr, BaseURL string }
+type QueryConfig struct{ HTTPAddr, BaseURL string }
 type MySQLConfig struct {
-	DSN             string
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
+}
+type DatabaseConfig struct {
+	IdentityDSN    string
+	RoomDSN        string
+	CommerceDSN    string
+	ArchiveDSN     string
+	QueryDSN       string
+	QueryWriterDSN string
 }
 type RedisConfig struct {
 	URL            string
@@ -139,6 +158,44 @@ type EngagementConfig struct {
 	ActiveRoomBatch      int64
 	ActiveRoomShards     int64
 	LikeSnapshotInterval time.Duration
+}
+
+func LoadGateway() (GatewayConfig, error) {
+	observability, err := loadObservability()
+	if err != nil {
+		return GatewayConfig{}, err
+	}
+	return GatewayConfig{
+		HTTP:          HTTPConfig{Addr: env("HTTP_ADDR", ":8080")},
+		Commerce:      CommerceConfig{BaseURL: env("COMMERCE_BASE_URL", "http://localhost:8081")},
+		Interaction:   InteractionConfig{BaseURL: env("INTERACTION_BASE_URL", "http://localhost:8082")},
+		IdentityRoom:  IdentityRoomConfig{BaseURL: env("IDENTITY_ROOM_BASE_URL", "http://localhost:8083")},
+		Query:         QueryConfig{BaseURL: env("QUERY_BASE_URL", "http://localhost:8084")},
+		Observability: observability,
+	}, nil
+}
+
+func loadObservability() (ObservabilityConfig, error) {
+	otelEnabled, err := strconv.ParseBool(env("OTEL_ENABLED", "true"))
+	if err != nil {
+		return ObservabilityConfig{}, fmt.Errorf("OTEL_ENABLED: %w", err)
+	}
+	otelInsecure, err := strconv.ParseBool(env("OTEL_INSECURE", "true"))
+	if err != nil {
+		return ObservabilityConfig{}, fmt.Errorf("OTEL_INSECURE: %w", err)
+	}
+	otelSampleRatio, err := strconv.ParseFloat(env("OTEL_SAMPLE_RATIO", "1"), 64)
+	if err != nil || otelSampleRatio < 0 || otelSampleRatio > 1 {
+		return ObservabilityConfig{}, fmt.Errorf("OTEL_SAMPLE_RATIO must be between 0 and 1")
+	}
+	return ObservabilityConfig{
+		WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
+		OTelEnabled:       otelEnabled,
+		OTelEndpoint:      env("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317"),
+		OTelInsecure:      otelInsecure,
+		OTelSampleRatio:   otelSampleRatio,
+		Environment:       env("DEPLOYMENT_ENVIRONMENT", "development"),
+	}, nil
 }
 
 func Load() (Config, error) {
@@ -306,17 +363,9 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("OUTBOX_PRODUCE_TIMEOUT must be a positive duration")
 	}
 
-	otelEnabled, err := strconv.ParseBool(env("OTEL_ENABLED", "true"))
+	observability, err := loadObservability()
 	if err != nil {
-		return Config{}, fmt.Errorf("OTEL_ENABLED: %w", err)
-	}
-	otelInsecure, err := strconv.ParseBool(env("OTEL_INSECURE", "true"))
-	if err != nil {
-		return Config{}, fmt.Errorf("OTEL_INSECURE: %w", err)
-	}
-	otelSampleRatio, err := strconv.ParseFloat(env("OTEL_SAMPLE_RATIO", "1"), 64)
-	if err != nil || otelSampleRatio < 0 || otelSampleRatio > 1 {
-		return Config{}, fmt.Errorf("OTEL_SAMPLE_RATIO must be between 0 and 1")
+		return Config{}, err
 	}
 
 	hotViewers, err := strconv.ParseInt(env("DANMAKU_HOT_VIEWERS", "50000"), 10, 64)
@@ -379,11 +428,19 @@ func Load() (Config, error) {
 		Commerce:     CommerceConfig{HTTPAddr: env("COMMERCE_HTTP_ADDR", ":8081"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("COMMERCE_BASE_URL")), "/")},
 		Interaction:  InteractionConfig{HTTPAddr: env("INTERACTION_HTTP_ADDR", ":8082"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("INTERACTION_BASE_URL")), "/")},
 		IdentityRoom: IdentityRoomConfig{HTTPAddr: env("IDENTITY_ROOM_HTTP_ADDR", ":8083"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("IDENTITY_ROOM_BASE_URL")), "/")},
+		Query:        QueryConfig{HTTPAddr: env("QUERY_HTTP_ADDR", ":8084"), BaseURL: strings.TrimRight(strings.TrimSpace(os.Getenv("QUERY_BASE_URL")), "/")},
 		MySQL: MySQLConfig{
-			DSN:             env("MYSQL_DSN", "live:live@tcp(mysql:3306)/live?parseTime=true&charset=utf8mb4"),
 			MaxOpenConns:    mysqlMaxOpenConns,
 			MaxIdleConns:    mysqlMaxIdleConns,
 			ConnMaxLifetime: mysqlConnMaxLifetime,
+		},
+		Databases: DatabaseConfig{
+			IdentityDSN:    env("IDENTITY_MYSQL_DSN", "live_identity_app:identity-app@tcp(mysql:3306)/identity?parseTime=true&charset=utf8mb4"),
+			RoomDSN:        env("ROOM_MYSQL_DSN", "live_room_app:room-app@tcp(mysql:3306)/room?parseTime=true&charset=utf8mb4"),
+			CommerceDSN:    env("COMMERCE_MYSQL_DSN", "live_commerce_app:commerce-app@tcp(mysql:3306)/commerce?parseTime=true&charset=utf8mb4"),
+			ArchiveDSN:     env("ARCHIVE_MYSQL_DSN", "live_archive_app:archive-app@tcp(mysql:3306)/archive?parseTime=true&charset=utf8mb4"),
+			QueryDSN:       env("QUERY_MYSQL_DSN", "live_query_audit:query-audit@tcp(mysql:3306)/query?parseTime=true&charset=utf8mb4"),
+			QueryWriterDSN: env("QUERY_WRITER_MYSQL_DSN", "live_query_app:query-app@tcp(mysql:3306)/query?parseTime=true&charset=utf8mb4"),
 		},
 		Redis: RedisConfig{URL: os.Getenv("REDIS_URL"), Addr: env("REDIS_ADDR", "redis:6379"), Password: os.Getenv("REDIS_PASSWORD"), DB: db},
 		Centrifugo: CentrifugoConfig{
@@ -411,17 +468,10 @@ func Load() (Config, error) {
 			SASLUsername:         os.Getenv("KAFKA_SASL_USERNAME"),
 			SASLPassword:         os.Getenv("KAFKA_SASL_PASSWORD"),
 		},
-		Outbox:  OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
-		Traffic: TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow, AdaptiveEnabled: adaptiveEnabled, TargetFanoutRate: targetFanout, HotFanoutRate: hotFanout, ProtectFanoutRate: protectFanout, MinSampleRate: minSampleRate},
-		Worker:  WorkerConfig{Roles: workerRoles},
-		Observability: ObservabilityConfig{
-			WorkerMetricsAddr: env("WORKER_METRICS_ADDR", ":9090"),
-			OTelEnabled:       otelEnabled,
-			OTelEndpoint:      env("OTEL_EXPORTER_OTLP_ENDPOINT", "otel-collector:4317"),
-			OTelInsecure:      otelInsecure,
-			OTelSampleRatio:   otelSampleRatio,
-			Environment:       env("DEPLOYMENT_ENVIRONMENT", "development"),
-		},
+		Outbox:        OutboxConfig{PollInterval: outboxPoll, BatchSize: outboxBatch, Lease: outboxLease, ProduceTimeout: outboxProduceTimeout},
+		Traffic:       TrafficConfig{HotViewers: hotViewers, ProtectViewers: protectViewers, HotDanmakuRate: hotRate, ProtectDanmakuRate: protectRate, HotSampleRate: hotSample, ProtectSampleRate: protectSample, RateWindow: rateWindow, AdaptiveEnabled: adaptiveEnabled, TargetFanoutRate: targetFanout, HotFanoutRate: hotFanout, ProtectFanoutRate: protectFanout, MinSampleRate: minSampleRate},
+		Worker:        WorkerConfig{Roles: workerRoles},
+		Observability: observability,
 	}, nil
 }
 

@@ -118,5 +118,49 @@ func run(ctx context.Context, dsn, dir string, log *slog.Logger) error {
 			return fmt.Errorf("record migration %s: %w", name, err)
 		}
 	}
+	if err := provisionServiceAccounts(ctx, conn); err != nil {
+		return fmt.Errorf("provision service accounts: %w", err)
+	}
+	log.Info("service database accounts provisioned")
+	return nil
+}
+
+type serviceAccount struct {
+	schema, user, passwordEnv, privileges string
+}
+
+func provisionServiceAccounts(ctx context.Context, conn *sql.Conn) error {
+	var accounts []serviceAccount
+	for _, schema := range []string{"identity", "room", "commerce", "archive", "query"} {
+		upper := strings.ToUpper(schema)
+		accounts = append(accounts,
+			serviceAccount{schema, "live_" + schema + "_app", upper + "_MYSQL_APP_PASSWORD", "SELECT, INSERT, UPDATE, DELETE"},
+			serviceAccount{schema, "live_" + schema + "_migrate", upper + "_MYSQL_MIGRATION_PASSWORD", "ALL PRIVILEGES"},
+			serviceAccount{schema, "live_" + schema + "_audit", upper + "_MYSQL_AUDIT_PASSWORD", "SELECT"},
+		)
+	}
+	for _, account := range accounts {
+		password := strings.TrimSpace(os.Getenv(account.passwordEnv))
+		if password == "" {
+			return fmt.Errorf("%s is required", account.passwordEnv)
+		}
+		var quotedPassword string
+		if err := conn.QueryRowContext(ctx, `SELECT QUOTE(?)`, password).Scan(&quotedPassword); err != nil {
+			return err
+		}
+		principal := fmt.Sprintf("'%s'@'%%'", account.user)
+		if _, err := conn.ExecContext(ctx, "CREATE USER IF NOT EXISTS "+principal+" IDENTIFIED BY "+quotedPassword); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "ALTER USER "+principal+" IDENTIFIED BY "+quotedPassword); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, "REVOKE ALL PRIVILEGES, GRANT OPTION FROM "+principal); err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("GRANT %s ON `%s`.* TO %s", account.privileges, account.schema, principal)); err != nil {
+			return err
+		}
+	}
 	return nil
 }

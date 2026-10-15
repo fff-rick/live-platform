@@ -39,17 +39,29 @@ func main() {
 		_ = closeTrace(ctx)
 	}()
 	m := observability.NewMetrics("live-identity-room")
-	db, err := mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime})
+	pool := mysqlstore.Config{MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime}
+	identityDB, err := mysqlstore.Open(cfg.Databases.IdentityDSN, pool)
 	if err != nil {
-		log.Error("open mysql", "error", err)
+		log.Error("open identity mysql", "error", err)
 		os.Exit(1)
 	}
 	defer func() {
-		if err := db.Close(); err != nil {
-			log.Error("close mysql", "error", err)
+		if err := identityDB.Close(); err != nil {
+			log.Error("close identity mysql", "error", err)
 		}
 	}()
-	m.RegisterDBPool("mysql", db.Stats)
+	roomDB, err := mysqlstore.Open(cfg.Databases.RoomDSN, pool)
+	if err != nil {
+		log.Error("open room mysql", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := roomDB.Close(); err != nil {
+			log.Error("close room mysql", "error", err)
+		}
+	}()
+	m.RegisterDBPool("identity-mysql", identityDB.Stats)
+	m.RegisterDBPool("room-mysql", roomDB.Stats)
 	redis, err := redisstore.Open(redisstore.Config{URL: cfg.Redis.URL, Addr: cfg.Redis.Addr, Password: cfg.Redis.Password, DB: cfg.Redis.DB, ActiveRoomShards: cfg.Engagement.ActiveRoomShards})
 	if err != nil {
 		log.Error("open redis", "error", err)
@@ -61,7 +73,8 @@ func main() {
 		}
 	}()
 	tokens := auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
-	h := httpapi.NewIdentityRoom(httpapi.Deps{Log: log, MySQL: db, Redis: redis, Centrifugo: realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, m), Metrics: m, Auth: auth.NewService(auth.NewRepository(db), tokens), AppTokens: tokens, CFTokens: cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL), CFSubTTL: cfg.Centrifugo.SubscriptionTokenTTL, Rooms: room.NewService(room.NewRepository(db)), Stats: stats.NewService(stats.NewRedisStore(redis))})
+	authService := auth.NewService(auth.NewRepository(identityDB), tokens)
+	h := httpapi.NewIdentityRoom(httpapi.Deps{Log: log, MySQL: databasePingers{identityDB, roomDB}, Redis: redis, Centrifugo: realtime.NewCentrifugo(cfg.Centrifugo.APIURL, cfg.Centrifugo.APIKey, m), Metrics: m, Auth: authService, AppTokens: tokens, CFTokens: cftoken.NewIssuer(cfg.Centrifugo.TokenSecret, cfg.Centrifugo.TokenTTL), CFSubTTL: cfg.Centrifugo.SubscriptionTokenTTL, Rooms: room.NewService(room.NewRepository(roomDB), authService), Stats: stats.NewService(stats.NewRedisStore(redis))})
 	srv := &http.Server{Addr: cfg.IdentityRoom.HTTPAddr, Handler: h, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}
 	ch := make(chan error, 1)
 	go func() {
@@ -82,4 +95,15 @@ func main() {
 	if err := srv.Shutdown(stopctx); err != nil {
 		log.Error("shutdown", "error", err)
 	}
+}
+
+type databasePingers []*mysqlstore.Store
+
+func (stores databasePingers) Ping(ctx context.Context) error {
+	for _, store := range stores {
+		if err := store.Ping(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }

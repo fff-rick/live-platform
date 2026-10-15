@@ -144,20 +144,51 @@ spec:
   template:
     metadata: {labels: {app: live-api}}
     spec:
+      terminationGracePeriodSeconds: 30
       imagePullSecrets: [{name: ghcr-secret}]
       containers:
         - name: live-api
           image: live-platform
           command: [live-api]
           ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: HTTP_ADDR, value: ':8080'}
+            - {name: COMMERCE_BASE_URL, value: 'http://live-commerce:8081'}
+            - {name: INTERACTION_BASE_URL, value: 'http://live-interaction:8082'}
+            - {name: IDENTITY_ROOM_BASE_URL, value: 'http://live-identity-room:8083'}
+            - {name: QUERY_BASE_URL, value: 'http://live-query:8084'}
+            - {name: OTEL_ENABLED, value: 'false'}
+            - {name: DEPLOYMENT_ENVIRONMENT, value: demo}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          readinessProbe: {httpGet: {path: /ready, port: http}, initialDelaySeconds: 5, periodSeconds: 5}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: live-query}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: live-query}}
+  template:
+    metadata: {labels: {app: live-query}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-query
+          image: live-platform
+          command: [live-query]
+          ports: [{name: http, containerPort: 8084}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
-          # Connection limits are per Pod, not per cluster. Keep the API under
-          # the documented budget when event workers are split below.
           env:
-            - {name: MYSQL_MAX_OPEN_CONNS, value: '20'}
-            - {name: MYSQL_MAX_IDLE_CONNS, value: '10'}
+            - name: QUERY_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: QUERY_MYSQL_DSN}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
+            - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
+            - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 256Mi}
@@ -181,8 +212,13 @@ spec:
           ports: [{name: http, containerPort: 8081}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
+            - name: COMMERCE_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: COMMERCE_MYSQL_DSN}}
+            - name: AUTH_JWT_SECRET
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: AUTH_JWT_SECRET}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:
@@ -208,12 +244,15 @@ spec:
           ports: [{name: http, containerPort: 8082}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
-          # Read-only transitional dependency; reserve a small slice of the
-          # MySQL connection budget until Stage 4 projections remove it.
           env:
-            - {name: MYSQL_MAX_OPEN_CONNS, value: '5'}
-            - {name: MYSQL_MAX_IDLE_CONNS, value: '2'}
+            - name: AUTH_JWT_SECRET
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: AUTH_JWT_SECRET}}
+            - name: CENTRIFUGO_API_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_API_KEY}}
+            - name: CENTRIFUGO_TOKEN_SECRET
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_TOKEN_SECRET}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: '1', memory: 512Mi}
@@ -237,8 +276,19 @@ spec:
           ports: [{name: http, containerPort: 8083}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
+            - name: IDENTITY_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: IDENTITY_MYSQL_DSN}}
+            - name: ROOM_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: ROOM_MYSQL_DSN}}
+            - name: AUTH_JWT_SECRET
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: AUTH_JWT_SECRET}}
+            - name: CENTRIFUGO_API_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_API_KEY}}
+            - name: CENTRIFUGO_TOKEN_SECRET
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_TOKEN_SECRET}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '15'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '8'}
           resources:
@@ -267,8 +317,12 @@ spec:
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
-          env: [{name: WORKER_ROLES, value: stats}]
+          env:
+            - {name: WORKER_ROLES, value: stats}
+            - name: CENTRIFUGO_API_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_API_KEY}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: 500m, memory: 256Mi}
@@ -293,9 +347,12 @@ spec:
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
             - {name: WORKER_ROLES, value: like-snapshot}
+            - name: QUERY_WRITER_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: QUERY_WRITER_MYSQL_DSN}}
+            - name: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: REDIS_PASSWORD, optional: true}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:
@@ -322,9 +379,10 @@ spec:
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
             - {name: WORKER_ROLES, value: outbox}
+            - name: COMMERCE_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: COMMERCE_MYSQL_DSN}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:
@@ -351,9 +409,12 @@ spec:
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
             - {name: WORKER_ROLES, value: gift-consumer}
+            - name: ARCHIVE_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: ARCHIVE_MYSQL_DSN}}
+            - name: CENTRIFUGO_API_KEY
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: CENTRIFUGO_API_KEY}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:
@@ -380,9 +441,10 @@ spec:
           ports: [{name: metrics, containerPort: 9090}]
           envFrom:
             - configMapRef: {name: live-platform-config}
-            - secretRef: {name: live-platform-runtime}
           env:
             - {name: WORKER_ROLES, value: danmaku-consumer}
+            - name: ARCHIVE_MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: ARCHIVE_MYSQL_DSN}}
             - {name: MYSQL_MAX_OPEN_CONNS, value: '10'}
             - {name: MYSQL_MAX_IDLE_CONNS, value: '5'}
           resources:

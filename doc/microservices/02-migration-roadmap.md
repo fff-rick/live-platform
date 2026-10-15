@@ -13,7 +13,7 @@
 
 ## 阶段 P0：冻结基线和建立自动护栏
 
-**实施状态：进行中（2026-10-14）**
+**实施状态：已完成（2026-10-15）**
 
 ### 目标
 
@@ -36,7 +36,7 @@
 - [x] `tests/boundaries` 冻结 Gateway import、服务 import、SQL 表、Redis Key、事件类型和内部路由基线。当前 Gateway 本地回退与 Commerce 直读 Room 是显式例外，只能在后续阶段删减。
 - [x] `doc/contracts/event-catalog-v1.md` 记录生产者、消费者、所有者、partition key、保留期和 DLQ。
 - [x] 永久坏消息必须先写入 `<source-topic>.dlq` 才提交 offset；`cmd/dlq-replay` 可保持原 key/payload 并输出操作人审计记录。
-- [ ] 在可用的 Docker 环境完成 UI smoke、M8 smoke 和真实 Kafka DLQ 导出/重放演练。
+- [x] 在可用的 Docker 环境完成 UI smoke、M8 smoke 和真实 Kafka DLQ 导出/重放演练。
 
 ### 影响代码
 
@@ -58,6 +58,8 @@
 
 ## 阶段 P1：先把 `live-api` 变成真正 Gateway
 
+**实施状态：已完成（2026-10-15）**
+
 ### 目标
 
 解除 Gateway 对 MySQL、Redis、Kafka 和业务 Repository 的依赖，先建立清晰的公网边界。
@@ -68,33 +70,34 @@
    - `GET /rooms/{id}/messages`；
    - `GET /rooms/{id}/stats`；
    - `GET /rooms/{id}/viewers`、`top-viewers` 在 Presence 拆分前可临时进入 Query。
-2. 为 Query 使用只读数据库账号；临时联表读取只作为阶段性兼容，代码必须标注删除门槛。
-3. `cmd/api` 在所有上游 URL 已配置时，不再创建本地 Auth/Room/Gift/Wallet/Danmaku Service。
+2. Query 在 P1 使用独立连接池读取共享源表；P2 已切换为 `query` schema 的只读账号。
+3. `cmd/api` 只装配四个固定 HTTP upstream，不再创建本地 Auth/Room/Gift/Wallet/Danmaku Service。
 4. Gateway readiness 只检查自身 HTTP 线程和路由配置，不 Ping 业务数据库。
-5. 保留 `*_BASE_URL` 回退一个发布窗口；验证新路由后删除生产环境的本地业务回退。
+5. 删除本地业务回退；任一必要 upstream 配置非法时 Gateway 启动失败。
 
 ### 切流顺序
 
 ```text
 部署 live-query
-→ 镜像流量比对旧查询与新查询
-→ 单路由 5% / 25% / 100% 切换
-→ 从 live-api 移除对应 Handler 和 Repository
-→ 移除 live-api 数据源 Secret
+→ 四条本地查询路由一次性切换到 Query
+→ 从 live-api 删除本地 Handler、Repository 和 fallback
+→ 移除 live-api 数据源配置与 Secret
 ```
 
 ### 完成门槛
 
 - `live-api` 在未提供 MySQL、Redis、Kafka、Centrifugo API Key 时正常启动并 readiness=200。
 - Query 故障只影响读接口；登录、送礼、弹幕路由仍可由 Gateway 转发。
-- Gateway 镜像中不再包含需要业务 DSN 才能初始化的本地装配路径。
+- `live-api` 二进制中不再包含需要业务 DSN 才能初始化的本地装配路径；独立生产镜像在 P7 收口。
 
 ### 回滚
 
-- 切流期间将 Query 路由指回旧 Handler；禁止双写。
-- 回滚窗口结束后若已删除旧 Handler，只回滚到上一不可变镜像，不在运行时重新授予 Gateway 数据库权限。
+- 本项目不保留运行时双路径；需要回滚时整体回滚到上一不可变镜像与 Compose/Kubernetes 清单。
+- 不在运行时重新授予 Gateway 数据库权限。
 
 ## 阶段 P2：数据库账号与数据所有权收口
+
+**实施状态：已完成（2026-10-15）**
 
 ### 目标
 
@@ -109,6 +112,16 @@
 5. 将全局 `outbox_events`、`processed_events` 拆成所有者自己的表，避免一个 Worker 获得全库权限。
 6. 迁移过程中所有旧表保持只读观察期，确认无写入后再删除。
 7. P4 拆进程前，合并的 `live-identity-room` 临时同时接收 `IDENTITY_MYSQL_DSN` 和 `ROOM_MYSQL_DSN`，Auth/Room Repository 分别使用各自连接池；不得为方便过渡保留共享超级账号。
+
+### 已落地结果
+
+- `008_p2_schema_ownership.sql` 建立五个 schema，回填旧表，并保留 `live.*` 作为只读观察副本。
+- `live-migrate` 为每个 schema 管理 app、migration、audit 三类账号；运行进程不接收迁移凭据。
+- IdentityRoom 使用 Identity/Room 两个连接池；Room Repository 已删除对 `users` 的 JOIN。
+- Commerce 通过带 800ms 超时的内部 Room API 校验房间和封禁，不再持有 Room 数据库权限。
+- Worker 按角色打开 Commerce、Archive 或 Query Writer 连接，不再使用共享 DSN。
+- Query 只持有 `query` audit 账号；当前消息和用户展示读模型使用 `SQL SECURITY DEFINER` 视图过渡，P3 改为 Kafka 维护的实体投影表。
+- 已验证 Commerce 账号读取 `room.live_rooms`、Query 账号直接读取 `identity.users` 均被 MySQL 拒绝。
 
 ### 表迁移顺序
 
@@ -128,7 +141,7 @@
 
 ### 回滚
 
-- 迁移期采用单写新表、只读比对旧表；回滚时停止写流量、核对增量后切回。
+- 新 schema 已成为单写者，旧 `live.*` 表只保留观察；回滚时必须停止写流量并把新 schema 增量回填到旧表后切回。
 - 不采用应用层双写，因此回滚必须有明确维护窗口和增量复制记录。
 
 ## 阶段 P3：房间、治理和身份事件投影

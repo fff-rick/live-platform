@@ -64,7 +64,7 @@ func TestARCH001GatewayBusinessImportBaseline(t *testing.T) {
 			got = append(got, name)
 		}
 	}
-	want := []string{"auth", "danmaku", "gift", "like", "room", "stats", "viewer", "wallet"}
+	var want []string
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("Gateway business-import debt changed: got %v want %v; remove entries as P1 progresses, never add one silently", got, want)
 	}
@@ -73,11 +73,18 @@ func TestARCH001GatewayBusinessImportBaseline(t *testing.T) {
 func TestARCH002ServiceDatabaseConnectionBaseline(t *testing.T) {
 	root := repositoryRoot(t)
 	expectedOpenCalls := map[string]int{
-		"cmd/api/main.go":          1,
+		"cmd/api/main.go":          0,
+		"cmd/query/main.go":        1,
 		"cmd/commerce/main.go":     1,
-		"cmd/identityroom/main.go": 1,
+		"cmd/identityroom/main.go": 2,
 		"cmd/interaction/main.go":  0,
 		"cmd/worker/main.go":       1,
+	}
+	expectedDSNs := map[string][]string{
+		"cmd/query/main.go":        {"cfg.Databases.QueryDSN"},
+		"cmd/commerce/main.go":     {"cfg.Databases.CommerceDSN"},
+		"cmd/identityroom/main.go": {"cfg.Databases.IdentityDSN", "cfg.Databases.RoomDSN"},
+		"cmd/worker/main.go":       {"cfg.Databases.CommerceDSN", "cfg.Databases.ArchiveDSN", "cfg.Databases.QueryWriterDSN"},
 	}
 	for file, want := range expectedOpenCalls {
 		source := readFile(t, root, file)
@@ -85,8 +92,16 @@ func TestARCH002ServiceDatabaseConnectionBaseline(t *testing.T) {
 		if got != want {
 			t.Errorf("%s MySQL connection count=%d want baseline %d; remove connections deliberately, never add one silently", file, got, want)
 		}
-		if got > 0 && !strings.Contains(source, "cfg.MySQL.DSN") {
-			t.Errorf("%s opens MySQL outside the reviewed service DSN", file)
+		if got > 0 && !strings.Contains(source, "cfg.Databases.") {
+			t.Errorf("%s opens MySQL outside a reviewed service-specific DSN", file)
+		}
+		for _, dsn := range expectedDSNs[file] {
+			if !strings.Contains(source, dsn) {
+				t.Errorf("%s must use %s", file, dsn)
+			}
+		}
+		if strings.Contains(source, "cfg.MySQL.DSN") {
+			t.Errorf("%s reintroduced the shared MySQL DSN", file)
 		}
 	}
 }
@@ -101,8 +116,8 @@ func TestARCH003And004ServiceImportBoundaries(t *testing.T) {
 	}
 
 	commerce := readFile(t, root, "cmd/commerce/main.go")
-	if got := strings.Count(commerce, "room.NewRepository(mysql)"); got != 1 {
-		t.Fatalf("known Commerce-to-Room repository exception count=%d want 1; P2 must remove it, new exceptions are forbidden", got)
+	if strings.Contains(commerce, "room.NewRepository(") {
+		t.Fatal("Commerce must validate rooms through the internal Room API, not a Room repository")
 	}
 	identity := strings.Join(importsOf(t, root, "cmd/identityroom/main.go"), "\n")
 	for _, forbidden := range []string{"/internal/gift", "/internal/wallet", "/internal/danmaku", "/internal/like", "/internal/mq"} {
@@ -116,17 +131,18 @@ func TestARCH005SQLTableOwnershipBaseline(t *testing.T) {
 	root := repositoryRoot(t)
 	allowed := map[string]map[string]bool{
 		"auth":       set("users"),
-		"room":       set("live_rooms", "live_sessions", "room_bans", "room_mutes", "users"),
+		"room":       set("live_rooms", "live_sessions", "room_bans", "room_mutes"),
 		"gift":       set("gifts", "gift_orders", "wallets", "wallet_transactions", "outbox_events"),
 		"wallet":     set("wallets", "wallet_transactions"),
 		"danmaku":    set("danmaku_records"),
 		"eventdedup": set("processed_events"),
 		"like":       set("room_like_snapshots"),
 		"outbox":     set("outbox_events"),
-		"httpapi":    set("danmaku_records", "gift_orders", "users", "gifts"),
+		"httpapi":    set("room_message_feed"),
+		"querymodel": set("user_display_projection"),
 	}
-	schemaTables := map[string]bool{}
-	createPattern := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
+	schemaTables := set("room_message_feed", "user_display_projection")
+	createPattern := regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)`)
 	_ = filepath.WalkDir(filepath.Join(root, "migrations"), func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".sql") {
 			return err
@@ -140,7 +156,7 @@ func TestARCH005SQLTableOwnershipBaseline(t *testing.T) {
 		}
 		return nil
 	})
-	tablePattern := regexp.MustCompile(`(?i)\b(?:FROM|JOIN|INTO|UPDATE|DELETE\s+FROM)\s+([a-z_][a-z0-9_.]*)`)
+	tablePattern := regexp.MustCompile(`(?i)\b(?:FROM|JOIN|INTO|UPDATE|DELETE\s+FROM)\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)`)
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -248,11 +264,14 @@ func TestARCH007EventTypeOwnership(t *testing.T) {
 
 func TestARCH008InternalRoutesAreNotInGatewayOrIngress(t *testing.T) {
 	root := repositoryRoot(t)
-	server := readFile(t, root, "internal/httpapi/server.go")
-	start := strings.Index(server, "func (s *Server) routes()")
-	end := strings.Index(server[start:], "func (s *Server) commerceOr")
-	if start < 0 || end < 0 {
+	server := readFile(t, root, "internal/gateway/server.go")
+	start := strings.Index(server, "func (s *Server) routes(")
+	if start < 0 {
 		t.Fatal("locate Gateway route table")
+	}
+	end := strings.Index(server[start:], "func (s *Server) Handler()")
+	if end < 0 {
+		t.Fatal("locate end of Gateway route table")
 	}
 	section := server[start : start+end]
 	if strings.Contains(section, "/internal/v1/") {
@@ -312,9 +331,15 @@ func TestHTTPRouteCatalogMatchesGateway(t *testing.T) {
 		want = append(want, key)
 	}
 
-	server := readFile(t, root, "internal/httpapi/server.go")
-	start := strings.Index(server, "func (s *Server) routes()")
-	end := strings.Index(server[start:], "func (s *Server) commerceOr")
+	server := readFile(t, root, "internal/gateway/server.go")
+	start := strings.Index(server, "func (s *Server) routes(")
+	if start < 0 {
+		t.Fatal("locate Gateway route table")
+	}
+	end := strings.Index(server[start:], "func (s *Server) Handler()")
+	if end < 0 {
+		t.Fatal("locate end of Gateway route table")
+	}
 	section := server[start : start+end]
 	pattern := regexp.MustCompile(`s\.mux\.Handle(?:Func)?\("([A-Z]+) (/api/v1/[^\"]+)"`)
 	var got []string
