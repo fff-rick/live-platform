@@ -1,17 +1,16 @@
 # LUMI LIVE 微服务细化拆分方案
 
-**状态：提案，等待按阶段实施**  
+**状态：P2 已完成，进入 P3**
 **基线：2026-10-14 当前代码**  
 **适用范围：直播互动平面，不包含视频采集、转码与 CDN**
 
 ## 结论
 
-当前项目已经完成 `live-commerce`、`live-interaction`、`live-identity-room` 和按角色运行的 `live-worker` 进程拆分，但仍存在四个会阻止独立扩缩容和故障隔离的问题：
+当前项目已经完成进程拆分和 MySQL schema/账号隔离，但仍存在三个会阻止完整故障隔离和独立扩缩容的问题：
 
-1. `live-api` 仍初始化 MySQL、Redis、Kafka 以及全部本地业务 Service，并直接处理历史、观众和统计读取。
-2. `live-commerce` 直接读取 `live_rooms`、`room_bans`，仍跨越账户房间域的数据边界。
-3. `live-interaction` 虽已不直连 MySQL，但弹幕和点赞依赖同步调用 `live-identity-room`，高频链路会被控制面故障拖累。
-4. 所有服务共享一个 MySQL schema、账号和 Redis namespace，数据所有权主要靠代码约定，数据库权限无法阻止越界。
+1. Commerce 和 Interaction 仍同步调用 `live-identity-room`，控制面故障会影响交易与高频互动。
+2. Identity 与 Room 仍合并在一个进程，Presence 与 Interaction 也尚未拆开。
+3. Redis Key 仍使用历史共享 namespace；Query 的安全定义视图也需要由 Kafka 实体投影替换。
 
 因此，本方案不继续按 `internal/` 包机械拆服务，而按以下三个条件确定边界：
 
@@ -43,18 +42,19 @@
 
 | 当前实现 | 目标去向 | 当前完成度 |
 | --- | --- | --- |
-| `cmd/api` | `live-gateway` | ⚠️ 已有代理，但仍承载本地业务和直连数据源 |
-| `cmd/identityroom` | `live-identity` + `live-room` | ⚠️ 功能真实，但身份与房间仍绑定在同一进程和 Repository 组合中 |
+| `cmd/api` | `live-gateway` | ✅ 只保留 Web UI、健康检查、指标和固定上游代理，不再连接业务数据源 |
+| `cmd/identityroom` | `live-identity` + `live-room` | ⚠️ 已使用两个 schema/账号和独立 Repository，但仍绑定在同一进程 |
 | `cmd/interaction` | `live-presence` + `live-interaction` | ⚠️ 高频写已拆出，但在线与弹幕点赞负载仍混在同一进程 |
-| `cmd/commerce` | `live-commerce` | ⚠️ 交易边界完整，房间/治理校验仍跨域读库 |
+| `cmd/commerce` | `live-commerce` | ✅ 交易使用独立 schema，房间/治理通过内部 HTTP 校验 |
 | `cmd/worker` | 服务所有者的独立 Worker Deployment | ⚠️ 角色开关和 K8s 清单存在，Compose 仍合并运行 |
-| `httpapi.roomMessages` 等读接口 | `live-query` | ❌ 仍由 Gateway 联表查询共享 MySQL / Redis |
+| `cmd/query` | `live-query` | ⚠️ 已使用独立只读账号；安全定义视图在 P3 替换为 Kafka 实体投影 |
 
 判断依据来自当前真实调用链：
 
-- Gateway 路由切换：[`../../internal/httpapi/server.go`](../../internal/httpapi/server.go)
-- Gateway 全量依赖装配：[`../../cmd/api/main.go`](../../cmd/api/main.go)
-- Commerce 跨域房间读取：[`../../cmd/commerce/main.go`](../../cmd/commerce/main.go)
+- Gateway 固定路由：[`../../internal/gateway/server.go`](../../internal/gateway/server.go)
+- Gateway 最小依赖装配：[`../../cmd/api/main.go`](../../cmd/api/main.go)
+- Query 依赖装配：[`../../cmd/query/main.go`](../../cmd/query/main.go)
+- Commerce 内部 Room 调用：[`../../cmd/commerce/main.go`](../../cmd/commerce/main.go)
 - Interaction 内部身份房间 HTTP 调用：[`../../internal/identityclient/client.go`](../../internal/identityclient/client.go)
 - Worker 角色装配：[`../../cmd/worker/main.go`](../../cmd/worker/main.go)
 
@@ -74,7 +74,7 @@
 
 - 不拆 `wallet-service` 与 `gift-order-service`，否则一次送礼会变成跨服务扣款事务。
 - 暂不把弹幕、点赞、热点策略拆成三个服务；它们共享房间互动限流和同一扇出容量模型。
-- 暂不引入 Service Mesh、分布式事务、全量 gRPC、Redis Cluster 或 Schema Registry。
+- 暂不引入 Service Mesh、分布式事务、全量 gRPC、Redis Cluster 或 Schema Registry。gRPC 放到本轮服务边界、数据所有权和独立部署完成后单独设计，避免拆分期间反复修改 RPC 契约。
 - 不为每个 Kafka consumer 单独创建代码仓库；保持 monorepo 和共享基础库，但独立构建、部署、授权和扩缩容。
 
 ## 最终成功标准

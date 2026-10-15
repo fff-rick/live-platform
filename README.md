@@ -90,7 +90,7 @@ LUMI LIVE 的重点不是模拟播放器，而是展示**高并发互动业务�
 
 ## 怎么实现的
 
-`live-api` 保持客户端 v1 契约，并通过可配置反向代理将请求路由到三个领域服务。同步业务数据进入 MySQL，短周期互动状态进入 Redis，跨服务异步事件进入 Kafka；浏览器通过 Centrifugo 订阅房间流频道和统计频道。
+`live-api` 是不连接业务数据源的统一网关，保持客户端 v1 契约并将请求路由到四个内部服务。同步业务数据进入 MySQL，短周期互动状态进入 Redis，跨服务异步事件进入 Kafka；浏览器通过 Centrifugo 订阅房间流频道和统计频道。
 
 ### 服务职责
 
@@ -100,6 +100,7 @@ LUMI LIVE 的重点不是模拟播放器，而是展示**高并发互动业务�
 | `live-identity-room` | 用户、JWT、房间生命周期、禁言和封禁 |
 | `live-interaction` | 进退房、心跳、弹幕、点赞、限流与热点保护 |
 | `live-commerce` | 钱包、礼物、幂等订单与 Transactional Outbox |
+| `live-query` | 消息历史、房间统计、在线观众与观众榜读取 |
 | `live-worker` | Outbox 发布、礼物实时投递、弹幕归档、统计聚合与点赞快照 |
 | Centrifugo | WebSocket 鉴权、房间频道订阅与实时广播 |
 | MySQL / Redis / Kafka | 持久化业务数据、承载短状态与限流、传递领域事件 |
@@ -218,15 +219,17 @@ make k6-system-load       # 使用 k6 执行多场景系统联合压测
 
 | 变量 | 说明 |
 | --- | --- |
-| `MYSQL_DSN` | MySQL 连接串 |
+| `IDENTITY_MYSQL_DSN` / `ROOM_MYSQL_DSN` | Identity 与 Room 独立 schema 连接串 |
+| `COMMERCE_MYSQL_DSN` / `ARCHIVE_MYSQL_DSN` | 交易与归档 schema 连接串 |
+| `QUERY_MYSQL_DSN` / `QUERY_WRITER_MYSQL_DSN` | Query 只读连接与投影写入连接 |
 | `REDIS_ADDR` / `REDIS_URL` | Redis 地址或 `redis://` / `rediss://` URL |
-| `KAFKA_BROKERS` | Kafka Broker 列表 |
+| `KAFKA_BROKERS` | Kafka Broker 列表；Gateway 不需要 |
 | `AUTH_JWT_SECRET` | 应用 JWT 密钥 |
 | `CENTRIFUGO_API_KEY` / `CENTRIFUGO_TOKEN_SECRET` | Centrifugo 服务端与令牌密钥 |
 | `VIEWER_TTL` | 观众在线 TTL；显式离房会立即清理 |
 | `ENABLE_DEV_WALLET_CREDIT` | 开发钱包充值开关；生产环境必须为 `false` |
 
-服务路由变量为 `COMMERCE_BASE_URL`、`INTERACTION_BASE_URL` 与 `IDENTITY_ROOM_BASE_URL`。它们为空时，`live-api` 回退到进程内处理路径；Docker 默认值会路由到对应内部服务，适合渐进式切流与回滚。
+Gateway 路由变量为 `COMMERCE_BASE_URL`、`INTERACTION_BASE_URL`、`IDENTITY_ROOM_BASE_URL` 与 `QUERY_BASE_URL`。四个上游都是必需依赖，`live-api` 不再包含进程内业务回退路径。
 
 生产环境必须替换全部开发密钥，并关闭开发充值接口；详见[安全说明](SECURITY.md)。
 

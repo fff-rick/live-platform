@@ -27,7 +27,6 @@ type RoomRepository interface {
 	Join(context.Context, int64, int64) error
 	IsMuted(context.Context, int64, int64) (bool, error)
 	IsBanned(context.Context, int64, int64) (bool, error)
-	UserExists(context.Context, int64) (bool, error)
 	ListMutes(context.Context, int64) ([]Mute, error)
 	ListBans(context.Context, int64) ([]Ban, error)
 	Ban(context.Context, int64, int64, int64, string) error
@@ -36,22 +35,39 @@ type RoomRepository interface {
 	Unmute(context.Context, int64, int64) error
 }
 
-type Service struct{ repo RoomRepository }
+type UserDirectory interface {
+	Nickname(context.Context, int64) (string, bool, error)
+}
 
-func NewService(repo RoomRepository) *Service { return &Service{repo: repo} }
+type Service struct {
+	repo  RoomRepository
+	users UserDirectory
+}
+
+func NewService(repo RoomRepository, users ...UserDirectory) *Service {
+	s := &Service{repo: repo}
+	if len(users) > 0 {
+		s.users = users[0]
+	}
+	return s
+}
 
 func (s *Service) Create(ctx context.Context, anchorID int64, title string) (Room, error) {
 	title = strings.TrimSpace(title)
 	if title == "" || len([]rune(title)) > 100 {
 		return Room{}, fmt.Errorf("%w: title must be 1-100 characters", ErrInvalidInput)
 	}
-	return s.repo.Create(ctx, anchorID, title)
+	v, err := s.repo.Create(ctx, anchorID, title)
+	return s.withAnchor(ctx, v, err)
 }
 
-func (s *Service) Get(ctx context.Context, id int64) (Room, error) { return s.repo.ByID(ctx, id) }
+func (s *Service) Get(ctx context.Context, id int64) (Room, error) {
+	v, err := s.repo.ByID(ctx, id)
+	return s.withAnchor(ctx, v, err)
+}
 
 func (s *Service) GetRoomAccess(ctx context.Context, roomID, userID int64) (RoomAccess, error) {
-	v, err := s.repo.ByID(ctx, roomID)
+	v, err := s.Get(ctx, roomID)
 	if err != nil {
 		return RoomAccess{}, err
 	}
@@ -70,7 +86,17 @@ func (s *Service) List(ctx context.Context, status Status, limit int) ([]Room, e
 	if status != "" && status != StatusPreparing && status != StatusLiving && status != StatusClosed {
 		return nil, fmt.Errorf("%w: unsupported room status", ErrInvalidInput)
 	}
-	return s.repo.List(ctx, status, limit)
+	items, err := s.repo.List(ctx, status, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i], err = s.withAnchor(ctx, items[i], nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 func (s *Service) Start(ctx context.Context, id, actorID int64) (Room, error) {
@@ -84,7 +110,7 @@ func (s *Service) Start(ctx context.Context, id, actorID int64) (Room, error) {
 	if err := s.repo.ChangeStatus(ctx, id, actorID, StatusPreparing, StatusLiving); err != nil {
 		return Room{}, err
 	}
-	return s.repo.ByID(ctx, id)
+	return s.Get(ctx, id)
 }
 
 func (s *Service) Stop(ctx context.Context, id, actorID int64) (Room, error) {
@@ -98,11 +124,11 @@ func (s *Service) Stop(ctx context.Context, id, actorID int64) (Room, error) {
 	if err := s.repo.ChangeStatus(ctx, id, actorID, StatusLiving, StatusClosed); err != nil {
 		return Room{}, err
 	}
-	return s.repo.ByID(ctx, id)
+	return s.Get(ctx, id)
 }
 
 func (s *Service) Join(ctx context.Context, id, userID int64) (Room, error) {
-	v, err := s.repo.ByID(ctx, id)
+	v, err := s.Get(ctx, id)
 	if err != nil {
 		return Room{}, err
 	}
@@ -137,7 +163,7 @@ func (s *Service) Mute(ctx context.Context, roomID, actorID, targetID int64, dur
 	if targetID == actorID {
 		return ErrSelfModeration
 	}
-	reason, err := validateModerationTarget(ctx, s.repo, targetID, reason)
+	reason, err := s.validateModerationTarget(ctx, targetID, reason)
 	if err != nil {
 		return err
 	}
@@ -163,7 +189,7 @@ func (s *Service) Ban(ctx context.Context, roomID, actorID, targetID int64, reas
 	if targetID == actorID {
 		return ErrSelfModeration
 	}
-	reason, err := validateModerationTarget(ctx, s.repo, targetID, reason)
+	reason, err := s.validateModerationTarget(ctx, targetID, reason)
 	if err != nil {
 		return err
 	}
@@ -181,14 +207,34 @@ func (s *Service) ListMutes(ctx context.Context, roomID, actorID int64) ([]Mute,
 	if err := s.requireAnchor(ctx, roomID, actorID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListMutes(ctx, roomID)
+	items, err := s.repo.ListMutes(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Nickname, _, err = s.nickname(ctx, items[i].UserID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 func (s *Service) ListBans(ctx context.Context, roomID, actorID int64) ([]Ban, error) {
 	if err := s.requireAnchor(ctx, roomID, actorID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListBans(ctx, roomID)
+	items, err := s.repo.ListBans(ctx, roomID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Nickname, _, err = s.nickname(ctx, items[i].UserID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 // requireAnchor 有意不限制房间状态：治理名单跨开播生命周期生效，主播可预封禁或下播后清理。
@@ -203,8 +249,8 @@ func (s *Service) requireAnchor(ctx context.Context, roomID, actorID int64) erro
 	return nil
 }
 
-func validateModerationTarget(ctx context.Context, repo RoomRepository, targetID int64, reason string) (string, error) {
-	exists, err := repo.UserExists(ctx, targetID)
+func (s *Service) validateModerationTarget(ctx context.Context, targetID int64, reason string) (string, error) {
+	_, exists, err := s.nickname(ctx, targetID)
 	if err != nil {
 		return "", err
 	}
@@ -216,4 +262,19 @@ func validateModerationTarget(ctx context.Context, repo RoomRepository, targetID
 		return "", fmt.Errorf("%w: reason must not exceed 255 characters", ErrInvalidInput)
 	}
 	return reason, nil
+}
+
+func (s *Service) withAnchor(ctx context.Context, v Room, err error) (Room, error) {
+	if err != nil || s.users == nil {
+		return v, err
+	}
+	v.AnchorNickname, _, err = s.nickname(ctx, v.AnchorID)
+	return v, err
+}
+
+func (s *Service) nickname(ctx context.Context, userID int64) (string, bool, error) {
+	if s.users == nil {
+		return "", false, errors.New("room user directory is not configured")
+	}
+	return s.users.Nickname(ctx, userID)
 }

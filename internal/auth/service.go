@@ -89,6 +89,17 @@ func (s *Service) Login(ctx context.Context, username, password string) (AuthRes
 
 func (s *Service) User(ctx context.Context, id int64) (User, error) { return s.repo.ByID(ctx, id) }
 
+func (s *Service) Nickname(ctx context.Context, id int64) (string, bool, error) {
+	u, err := s.repo.ByID(ctx, id)
+	if errors.Is(err, ErrUserNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return u.Nickname, true, nil
+}
+
 func (s *Service) result(u User) (AuthResult, error) {
 	tok, exp, err := s.tokens.Issue(u.ID)
 	if err != nil {

@@ -14,8 +14,8 @@ import (
 	"github.com/example/live-platform/internal/commerceapi"
 	"github.com/example/live-platform/internal/config"
 	"github.com/example/live-platform/internal/gift"
+	"github.com/example/live-platform/internal/identityclient"
 	"github.com/example/live-platform/internal/observability"
-	"github.com/example/live-platform/internal/room"
 	"github.com/example/live-platform/internal/store/mysqlstore"
 	"github.com/example/live-platform/internal/store/redisstore"
 	"github.com/example/live-platform/internal/viewer"
@@ -40,7 +40,7 @@ func main() {
 		_ = shutdownTrace(ctx)
 	}()
 	metrics := observability.NewMetrics("live-commerce")
-	mysql, err := mysqlstore.Open(cfg.MySQL.DSN, mysqlstore.Config{MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime})
+	mysql, err := mysqlstore.Open(cfg.Databases.CommerceDSN, mysqlstore.Config{MaxOpenConns: cfg.MySQL.MaxOpenConns, MaxIdleConns: cfg.MySQL.MaxIdleConns, ConnMaxLifetime: cfg.MySQL.ConnMaxLifetime})
 	if err != nil {
 		log.Error("open mysql", "error", err)
 		os.Exit(1)
@@ -62,7 +62,7 @@ func main() {
 		}
 	}()
 
-	rooms := room.NewService(room.NewRepository(mysql)) // Transitional room read dependency; Stage 4 replaces it with a room read model/API.
+	rooms := identityclient.New(cfg.IdentityRoom.BaseURL)
 	gifts := gift.NewService(gift.NewRepository(mysql), rooms, redisstore.NewFixedWindowLimiter(redis), gift.Config{MaxCountPerRequest: cfg.Gift.MaxCountPerRequest, UserRateLimit: cfg.Gift.UserRateLimit, UserRateWindow: cfg.Gift.UserRateWindow}, cfg.Kafka.GiftTopic)
 	api := commerceapi.New(commerceapi.Deps{Log: log, Tokens: auth.NewTokenManager(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL), Gifts: gifts, Wallet: wallet.NewService(wallet.NewRepository(mysql), cfg.Wallet.DevCreditEnabled), Viewers: viewer.NewService(redis, cfg.Engagement.ViewerTTL), Metrics: metrics, MySQL: mysql, Redis: redis})
 	srv := &http.Server{Addr: cfg.Commerce.HTTPAddr, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 60 * time.Second}

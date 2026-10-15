@@ -84,3 +84,20 @@ func TestStatsOnlyWorkerDoesNotRequireKafkaCredentials(t *testing.T) {
 		t.Fatalf("stats-only worker should not require Kafka credentials: %v", err)
 	}
 }
+
+func TestGatewayConfigDoesNotRequireBusinessDependencies(t *testing.T) {
+	t.Setenv("MYSQL_MAX_OPEN_CONNS", "invalid")
+	t.Setenv("KAFKA_BROKERS", "")
+	t.Setenv("KAFKA_SASL_MECHANISM", "invalid")
+	t.Setenv("COMMERCE_BASE_URL", "http://commerce:8081")
+	t.Setenv("INTERACTION_BASE_URL", "http://interaction:8082")
+	t.Setenv("IDENTITY_ROOM_BASE_URL", "http://identity-room:8083")
+	t.Setenv("QUERY_BASE_URL", "http://query:8084")
+	cfg, err := LoadGateway()
+	if err != nil {
+		t.Fatalf("LoadGateway: %v", err)
+	}
+	if cfg.Query.BaseURL != "http://query:8084" {
+		t.Fatalf("unexpected query target %q", cfg.Query.BaseURL)
+	}
+}

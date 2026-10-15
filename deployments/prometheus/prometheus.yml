@@ -15,6 +15,10 @@ scrape_configs:
     static_configs:
       - targets: ["live-api:8080"]
 
+  - job_name: live-query
+    static_configs:
+      - targets: ["live-query:8084"]
+
   - job_name: live-worker
     static_configs:
       - targets: ["live-worker:9090"]

@@ -312,7 +312,7 @@
     "list": [
       {
         "name": "service", "label": "HTTP 服务", "type": "query", "datasource": {"type": "prometheus", "uid": "prometheus"},
-        "definition": "label_values(up{job=~\"live-api|live-commerce|live-interaction|live-identity-room\"}, job)", "query": {"query": "label_values(up{job=~\"live-api|live-commerce|live-interaction|live-identity-room\"}, job)", "refId": "StandardVariableQuery"},
+        "definition": "label_values(up{job=~\"live-api|live-query|live-commerce|live-interaction|live-identity-room\"}, job)", "query": {"query": "label_values(up{job=~\"live-api|live-query|live-commerce|live-interaction|live-identity-room\"}, job)", "refId": "StandardVariableQuery"},
         "includeAll": true, "allValue": ".*", "multi": true, "refresh": 1, "sort": 1,
         "current": {"selected": true, "text": ["全部"], "value": ["$__all"]}, "options": []
       }

@@ -35,11 +35,10 @@ func (r *Repository) ByID(ctx context.Context, id int64) (Room, error) {
 	var v Room
 	var started, ended sql.NullTime
 	err := r.db.QueryRowContext(ctx, `
-SELECT r.id, r.anchor_id, u.nickname, r.title, r.status, r.started_at, r.ended_at, r.created_at
-FROM live_rooms r
-JOIN users u ON u.id = r.anchor_id
-WHERE r.id = ? LIMIT 1`, id).
-		Scan(&v.ID, &v.AnchorID, &v.AnchorNickname, &v.Title, &v.Status, &started, &ended, &v.CreatedAt)
+SELECT id, anchor_id, title, status, started_at, ended_at, created_at
+FROM live_rooms
+WHERE id = ? LIMIT 1`, id).
+		Scan(&v.ID, &v.AnchorID, &v.Title, &v.Status, &started, &ended, &v.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, ErrNotFound
 	}
@@ -62,15 +61,14 @@ func (r *Repository) List(ctx context.Context, status Status, limit int) ([]Room
 		limit = 24
 	}
 	query := `
-SELECT r.id, r.anchor_id, u.nickname, r.title, r.status, r.started_at, r.ended_at, r.created_at
-FROM live_rooms r
-JOIN users u ON u.id = r.anchor_id`
+SELECT id, anchor_id, title, status, started_at, ended_at, created_at
+FROM live_rooms`
 	args := make([]any, 0, 2)
 	if status != "" {
-		query += ` WHERE r.status = ?`
+		query += ` WHERE status = ?`
 		args = append(args, status)
 	}
-	query += ` ORDER BY COALESCE(r.started_at, r.created_at) DESC, r.id DESC LIMIT ?`
+	query += ` ORDER BY COALESCE(started_at, created_at) DESC, id DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -81,7 +79,7 @@ JOIN users u ON u.id = r.anchor_id`
 	for rows.Next() {
 		var v Room
 		var started, ended sql.NullTime
-		if err := rows.Scan(&v.ID, &v.AnchorID, &v.AnchorNickname, &v.Title, &v.Status, &started, &ended, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.AnchorID, &v.Title, &v.Status, &started, &ended, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		if started.Valid {
@@ -138,12 +136,6 @@ SELECT EXISTS(SELECT 1 FROM room_bans WHERE room_id=? AND user_id=?)`, roomID, u
 	return banned == 1, err
 }
 
-func (r *Repository) UserExists(ctx context.Context, userID int64) (bool, error) {
-	var exists int
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=?)`, userID).Scan(&exists)
-	return exists == 1, err
-}
-
 func (r *Repository) Ban(ctx context.Context, roomID, userID, createdBy int64, reason string) error {
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO room_bans(room_id, user_id, created_by, reason, created_at)
@@ -159,9 +151,9 @@ func (r *Repository) Unban(ctx context.Context, roomID, userID int64) error {
 
 func (r *Repository) ListBans(ctx context.Context, roomID int64) ([]Ban, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT b.user_id, u.nickname, b.reason, b.created_at
-FROM room_bans b JOIN users u ON u.id=b.user_id
-WHERE b.room_id=? ORDER BY b.created_at DESC`, roomID)
+SELECT user_id, reason, created_at
+FROM room_bans
+WHERE room_id=? ORDER BY created_at DESC`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +161,7 @@ WHERE b.room_id=? ORDER BY b.created_at DESC`, roomID)
 	items := make([]Ban, 0)
 	for rows.Next() {
 		var item Ban
-		if err := rows.Scan(&item.UserID, &item.Nickname, &item.Reason, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.Reason, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -203,10 +195,10 @@ func (r *Repository) Unmute(ctx context.Context, roomID, userID int64) error {
 
 func (r *Repository) ListMutes(ctx context.Context, roomID int64) ([]Mute, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT m.user_id, u.nickname, m.muted_until, m.reason, m.updated_at
-FROM room_mutes m JOIN users u ON u.id=m.user_id
-WHERE m.room_id=? AND (m.muted_until IS NULL OR m.muted_until > NOW(3))
-ORDER BY m.updated_at DESC`, roomID)
+SELECT user_id, muted_until, reason, updated_at
+FROM room_mutes
+WHERE room_id=? AND (muted_until IS NULL OR muted_until > NOW(3))
+ORDER BY updated_at DESC`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +206,7 @@ ORDER BY m.updated_at DESC`, roomID)
 	items := make([]Mute, 0)
 	for rows.Next() {
 		var item Mute
-		if err := rows.Scan(&item.UserID, &item.Nickname, &item.MutedUntil, &item.Reason, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.UserID, &item.MutedUntil, &item.Reason, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

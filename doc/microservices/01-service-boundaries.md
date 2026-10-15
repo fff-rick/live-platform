@@ -312,11 +312,12 @@ JWT 初期可继续使用共享 HMAC secret；完成边界收口后改为 Identi
 
 | 账号 | 允许权限 |
 | --- | --- |
-| `identity_app` | `identity.*` |
-| `room_app` | `room.*`，只读 `room.room_user_projection` |
-| `commerce_app` | `commerce.*` |
-| `query_app` | `query.*` |
-| 各 Worker 账号 | 仅对应 Outbox、投影或归档表 |
+| `live_identity_app` | `identity.*` |
+| `live_room_app` | `room.*` |
+| `live_commerce_app` | `commerce.*` |
+| `live_archive_app` | `archive.*`，仅归档和消费幂等 Worker 使用 |
+| `live_query_app` | `query.*`，仅投影写入 Worker 使用 |
+| `live_query_audit` | 只读 `query.*`，由 `live-query` 使用 |
 
 运行时禁止使用 `GRANT ALL ON live.*`。迁移账号单独保管，只在 Job 中使用。
 

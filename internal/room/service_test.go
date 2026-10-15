@@ -27,10 +27,13 @@ func (f *fakeRepo) ChangeStatus(_ context.Context, _ int64, _ int64, from, to St
 	f.v.Status = to
 	return nil
 }
-func (*fakeRepo) Join(context.Context, int64, int64) error                            { return nil }
-func (*fakeRepo) IsMuted(context.Context, int64, int64) (bool, error)                 { return false, nil }
-func (f *fakeRepo) IsBanned(context.Context, int64, int64) (bool, error)              { return f.banned, nil }
-func (f *fakeRepo) UserExists(context.Context, int64) (bool, error)                   { return f.userExists, nil }
+func (*fakeRepo) Join(context.Context, int64, int64) error               { return nil }
+func (*fakeRepo) IsMuted(context.Context, int64, int64) (bool, error)    { return false, nil }
+func (f *fakeRepo) IsBanned(context.Context, int64, int64) (bool, error) { return f.banned, nil }
+func (f *fakeRepo) UserExists(context.Context, int64) (bool, error)      { return f.userExists, nil }
+func (f *fakeRepo) Nickname(context.Context, int64) (string, bool, error) {
+	return "user", f.userExists, nil
+}
 func (*fakeRepo) ListMutes(context.Context, int64) ([]Mute, error)                    { return nil, nil }
 func (*fakeRepo) ListBans(context.Context, int64) ([]Ban, error)                      { return nil, nil }
 func (*fakeRepo) Ban(context.Context, int64, int64, int64, string) error              { return nil }
@@ -84,11 +87,13 @@ func TestAnchorCannotModerateSelf(t *testing.T) {
 }
 
 func TestModerationValidatesTargetAndReason(t *testing.T) {
-	s := NewService(&fakeRepo{v: Room{ID: 1, AnchorID: 7}, userExists: false})
+	r := &fakeRepo{v: Room{ID: 1, AnchorID: 7}, userExists: false}
+	s := NewService(r, r)
 	if err := s.Ban(context.Background(), 1, 7, 9, ""); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("missing user err=%v", err)
 	}
-	s = NewService(&fakeRepo{v: Room{ID: 1, AnchorID: 7}, userExists: true})
+	r = &fakeRepo{v: Room{ID: 1, AnchorID: 7}, userExists: true}
+	s = NewService(r, r)
 	if err := s.Mute(context.Background(), 1, 7, 9, time.Minute, strings.Repeat("理", 256)); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("long reason err=%v", err)
 	}

@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata: {name: live-migrate}
+spec:
+  backoffLimit: 10
+  template:
+    metadata: {labels: {app: live-migrate}}
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets: [{name: ghcr-secret}]
+      containers:
+        - name: live-migrate
+          image: live-platform
+          command: [live-migrate]
+          envFrom:
+            - secretRef: {name: live-platform-runtime}
+          env:
+            - name: MYSQL_DSN
+              valueFrom: {secretKeyRef: {name: live-platform-runtime, key: MIGRATION_MYSQL_DSN}}
+            - {name: MIGRATIONS_DIR, value: /app/migrations}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
