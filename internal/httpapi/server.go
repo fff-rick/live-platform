@@ -16,7 +16,6 @@ import (
 
 	"github.com/example/live-platform/internal/auth"
 	"github.com/example/live-platform/internal/danmaku"
-	"github.com/example/live-platform/internal/gift"
 	"github.com/example/live-platform/internal/idgen"
 	"github.com/example/live-platform/internal/like"
 	"github.com/example/live-platform/internal/observability"
@@ -25,7 +24,6 @@ import (
 	"github.com/example/live-platform/internal/stats"
 	cftoken "github.com/example/live-platform/internal/token"
 	"github.com/example/live-platform/internal/viewer"
-	"github.com/example/live-platform/internal/wallet"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -61,8 +59,6 @@ type Server struct {
 	likes      *like.Service
 	viewers    *viewer.Service
 	stats      *stats.Service
-	gifts      *gift.Service
-	wallet     *wallet.Service
 	mux        *http.ServeMux
 }
 
@@ -84,8 +80,6 @@ type Deps struct {
 	Likes      *like.Service
 	Viewers    *viewer.Service
 	Stats      *stats.Service
-	Gifts      *gift.Service
-	Wallet     *wallet.Service
 }
 type UserReader interface {
 	User(context.Context, int64) (auth.User, error)
@@ -735,158 +729,6 @@ func (s *Server) roomStats(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("get room stats failed", "error", err, "room_id", roomID)
 		writeError(w, http.StatusServiceUnavailable, "STATS_UNAVAILABLE", "room stats unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-func (s *Server) listGifts(w http.ResponseWriter, r *http.Request) {
-	items, err := s.gifts.List(r.Context())
-	if err != nil {
-		s.log.Error("list gifts failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to list gifts")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-func (s *Server) walletBalance(w http.ResponseWriter, r *http.Request, userID int64) {
-	v, err := s.wallet.Balance(r.Context(), userID)
-	if err != nil {
-		s.log.Error("wallet balance failed", "error", err, "user_id", userID)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load wallet")
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-func (s *Server) walletTransactions(w http.ResponseWriter, r *http.Request, userID int64) {
-	items, err := s.wallet.Transactions(r.Context(), userID)
-	if err != nil {
-		s.log.Error("wallet transactions failed", "error", err, "user_id", userID)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load wallet transactions")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
-}
-
-type walletCreditRequest struct {
-	Amount int64 `json:"amount"`
-}
-
-func (s *Server) devWalletCredit(w http.ResponseWriter, r *http.Request, userID int64) {
-	var in walletCreditRequest
-	if err := decodeJSON(w, r, 8<<10, &in); err != nil {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	v, err := s.wallet.DevCredit(r.Context(), userID, in.Amount)
-	if err != nil {
-		switch {
-		case errors.Is(err, wallet.ErrCreditDisabled):
-			writeError(w, http.StatusNotFound, "NOT_FOUND", "endpoint is disabled")
-		case errors.Is(err, wallet.ErrInvalidCredit):
-			writeError(w, http.StatusBadRequest, "INVALID_CREDIT_AMOUNT", err.Error())
-		default:
-			s.log.Error("dev wallet credit failed", "error", err, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to credit wallet")
-		}
-		return
-	}
-	writeJSON(w, http.StatusOK, v)
-}
-
-type giftRequest struct {
-	GiftID int64 `json:"gift_id"`
-	Count  int64 `json:"count"`
-}
-
-func (s *Server) sendGift(w http.ResponseWriter, r *http.Request, userID int64) {
-	roomID, ok := pathInt64(w, r, "room_id")
-	if !ok {
-		return
-	}
-	requestID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if requestID == "" {
-		if s.metrics != nil {
-			s.metrics.GiftOrders.WithLabelValues("rejected").Inc()
-		}
-		writeError(w, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key header is required")
-		return
-	}
-	var in giftRequest
-	if err := decodeJSON(w, r, 8<<10, &in); err != nil || in.GiftID <= 0 {
-		if s.metrics != nil {
-			s.metrics.GiftOrders.WithLabelValues("rejected").Inc()
-		}
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "valid gift_id and count are required")
-		return
-	}
-	result, err := s.gifts.Send(r.Context(), roomID, userID, in.GiftID, in.Count, requestID)
-	if err != nil {
-		if s.metrics != nil {
-			result := "failed"
-			if errors.Is(err, gift.ErrInvalidCount) || errors.Is(err, gift.ErrInvalidRequestID) || errors.Is(err, gift.ErrGiftNotFound) || errors.Is(err, gift.ErrGiftOffline) || errors.Is(err, gift.ErrInsufficientBalance) || errors.Is(err, gift.ErrIdempotencyConflict) || errors.Is(err, gift.ErrRateLimited) || errors.Is(err, room.ErrNotFound) || errors.Is(err, room.ErrNotLiving) || errors.Is(err, room.ErrBanned) {
-				result = "rejected"
-			}
-			if errors.Is(err, gift.ErrRateLimited) {
-				s.metrics.GiftRateLimited.Inc()
-			}
-			s.metrics.GiftOrders.WithLabelValues(result).Inc()
-		}
-		switch {
-		case errors.Is(err, gift.ErrInvalidCount):
-			writeError(w, http.StatusBadRequest, "INVALID_GIFT_COUNT", err.Error())
-		case errors.Is(err, gift.ErrInvalidRequestID):
-			writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", err.Error())
-		case errors.Is(err, gift.ErrGiftNotFound):
-			writeError(w, http.StatusNotFound, "GIFT_NOT_FOUND", err.Error())
-		case errors.Is(err, gift.ErrGiftOffline):
-			writeError(w, http.StatusConflict, "GIFT_OFFLINE", err.Error())
-		case errors.Is(err, gift.ErrInsufficientBalance):
-			writeError(w, http.StatusConflict, "INSUFFICIENT_BALANCE", err.Error())
-		case errors.Is(err, gift.ErrIdempotencyConflict):
-			writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", err.Error())
-		case errors.Is(err, gift.ErrRateLimited):
-			writeError(w, http.StatusTooManyRequests, "GIFT_RATE_LIMITED", err.Error())
-		case errors.Is(err, room.ErrNotFound), errors.Is(err, room.ErrNotLiving), errors.Is(err, room.ErrBanned):
-			handleRoomError(w, err)
-		default:
-			s.log.Error("send gift failed", "error", err, "room_id", roomID, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "GIFT_FAILED", "failed to send gift")
-		}
-		return
-	}
-	if result.EventQueued {
-		_ = s.viewers.AddGiftValue(r.Context(), roomID, userID, result.Order.TotalAmount)
-	}
-	if s.metrics != nil {
-		metricResult := "success"
-		if result.IdempotentReplay {
-			metricResult = "replay"
-		}
-		s.metrics.GiftOrders.WithLabelValues(metricResult).Inc()
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) giftOrder(w http.ResponseWriter, r *http.Request, userID int64) {
-	orderNo := strings.TrimSpace(r.PathValue("order_no"))
-	if len(orderNo) < 2 || len(orderNo) > 64 {
-		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid order_no")
-		return
-	}
-	v, err := s.gifts.Order(r.Context(), orderNo, userID)
-	if err != nil {
-		switch {
-		case errors.Is(err, gift.ErrOrderNotFound):
-			writeError(w, http.StatusNotFound, "GIFT_ORDER_NOT_FOUND", err.Error())
-		case errors.Is(err, gift.ErrOrderForbidden):
-			writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error())
-		default:
-			s.log.Error("get gift order failed", "error", err, "order_no", orderNo, "user_id", userID)
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "failed to load gift order")
-		}
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
